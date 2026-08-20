@@ -141,7 +141,7 @@ swift run Corral --list     # the same inventory, printed
 ```sh
 Corral --list                  # human-readable
 Corral --list --json           # machine-readable
-Corral --list --search recall   # only agents matching a project, tool or pid
+Corral --list --search recall  # only agents matching a project, tool or pid
 Corral --disk           # what is on disk (read-only; nothing is deleted)
 Corral --bench          # how much a refresh costs
 ```
