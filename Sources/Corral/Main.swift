@@ -9,6 +9,14 @@ enum Entry {
             print("Corral \(BuildInfo.display)")
             return
         }
+        if args.contains("--bench") {
+            CLI.bench()
+            return
+        }
+        if args.contains("--disk") {
+            CLI.disk()
+            return
+        }
         if args.contains("--list") {
             CLI.list(json: args.contains("--json"))
             return
@@ -19,6 +27,7 @@ enum Entry {
 
               Corral               open the window
               Corral --list        print running agents
+              Corral --disk        print what the tools have left on disk
               Corral --list --json machine-readable output
               Corral --version     print version
             """)
@@ -31,11 +40,13 @@ enum Entry {
 struct CorralApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var model = CorralViewModel()
+    @StateObject private var disk = DiskViewModel()
 
     var body: some Scene {
         WindowGroup("Corral") {
-            ContentView()
+            RootView()
                 .environmentObject(model)
+                .environmentObject(disk)
                 .frame(minWidth: 860, minHeight: 520)
         }
         .windowToolbarStyle(.unifiedCompact)

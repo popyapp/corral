@@ -69,6 +69,13 @@ enum ProcessRole: String, Codable {
     case helper
     case renderer
     case mcpServer
+    /// A long-running server the agent started while working on the project —
+    /// `next dev`, `vite`, `rails s`. These outlive the task that started them,
+    /// hold ports, and are routinely the largest thing in a group.
+    case devServer
+    /// Compilers, test runners, language servers, package managers. Supporting
+    /// work rather than something you left running on purpose.
+    case tooling
     case shell
     /// `caffeinate`. Claude Code spawns one per session to stop the Mac
     /// sleeping mid-task — which means a pile of forgotten agents is also a
@@ -82,6 +89,8 @@ enum ProcessRole: String, Codable {
         case .helper: return "helper"
         case .renderer: return "renderer"
         case .mcpServer: return "MCP server"
+        case .devServer: return "dev server"
+        case .tooling: return "tooling"
         case .shell: return "shell"
         case .powerAssertion: return "keeps Mac awake"
         case .child: return "child"
@@ -94,6 +103,8 @@ enum ProcessRole: String, Codable {
         case .helper: return "puzzlepiece.extension"
         case .renderer: return "rectangle.on.rectangle"
         case .mcpServer: return "point.3.connected.trianglepath.dotted"
+        case .devServer: return "server.rack"
+        case .tooling: return "hammer"
         case .shell: return "chevron.right.square"
         case .powerAssertion: return "eye"
         case .child: return "arrow.turn.down.right"

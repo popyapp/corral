@@ -57,9 +57,50 @@ idle, what it spawned, and what it is costing you.
   controlling terminal, start time.
 - **What is safe to reclaim.** Agents idle for over an hour, totalled, behind one
   button.
+- **What they left on disk.** A second tab measures every cache, superseded
+  version and log the tools have accumulated, sorted by how safe it is to
+  remove. On the machine this was written on that came to 14 GB.
 
 Supported: **Claude Code**, **Claude** (desktop), **Codex**, **Cursor** and its
 CLI agent, **Windsurf**.
+
+## What it costs to run
+
+A monitor that shows you what is eating your CPU has no business being on that
+list. A refresh takes **~8 ms** across ~550 processes — 0.4% of one core at the
+two-second refresh rate. Measure it yourself with `Corral --bench`.
+
+That took work. The first version read every process's argument vector every
+tick, which allocates a megabyte a time, and cost 17% of a core. The fix is that
+almost nothing about a process changes: its path, its arguments, its terminal
+and what tool it belongs to are all fixed at birth, so they are asked once and
+cached against the pid and its start time. Only memory and CPU are re-read.
+
+## On disk
+
+```
+  20 items · 13,97 GB total
+  (skipping versions in use: 2.1.227, 2.1.228, 2.1.231, …)
+
+  SAFE TO CLEAR — 1,44 GB
+    554,9 MB    Network cache            ~/Library/Application Support/Claude/Cache
+    294,7 MB    Superseded versions      ~/.local/share/claude/versions/2.1.229
+    …
+  WILL BE DOWNLOADED AGAIN — 11,94 GB
+    10,89 GB    Local agent VM image     ~/Library/Application Support/Claude/vm_bundles
+     1,05 GB    Plugin cache             ~/.claude/plugins/cache
+  YOUR DATA — 591,9 MB
+    520,6 MB    Conversation history     ~/.claude/projects
+```
+
+Three groups, because "reclaimable" is not one thing:
+
+- **Safe to clear** — caches the app rebuilds by itself. Ticked by default.
+- **Will be downloaded again** — big, and fetched again on demand. Your call.
+- **Your data** — transcripts, undo history, extensions. **Never** ticked for you.
+
+A version that is currently running is never offered, whatever its number says.
+Everything goes to the Trash, never `unlink`.
 
 ## Install
 
@@ -84,6 +125,8 @@ swift run Corral --list     # the same inventory, printed
 ```sh
 Corral --list           # human-readable
 Corral --list --json    # machine-readable
+Corral --disk           # what is on disk (read-only; nothing is deleted)
+Corral --bench          # how much a refresh costs
 ```
 
 ```
@@ -119,6 +162,22 @@ block sits right after it in the same buffer and is full of API keys, so Corral
 never reads that far.
 
 Nothing leaves your machine. There is no network code in this app.
+
+## Tests
+
+```sh
+swift test
+```
+
+Cursor, Codex and Windsurf have to work on a machine that has never run them, so
+most of the suite feeds the catalog the exact executable paths those tools
+produce — including `CursorUIViewService`, the macOS text-input helper that a
+naive name match would list as Cursor and offer to kill.
+
+The live tests go further: they **compile a small binary named `codex`**, run it
+in a temp project directory, and assert Corral finds it, names the project, and
+can stop it. Copying `/bin/sleep` and renaming it does not work — macOS SIGKILLs
+an Apple-signed binary running from the wrong place — so the test builds its own.
 
 ## Building
 

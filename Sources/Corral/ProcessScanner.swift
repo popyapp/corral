@@ -24,7 +24,129 @@ enum ProcessScanner {
         let lastTerminalActivity: Date?
     }
 
-    /// Every process owned by the current user.
+    /// The cheap facts: everything the kernel already handed us in the process
+    /// table, plus the executable path.
+    ///
+    /// This exists because the expensive facts are *very* expensive at scale.
+    /// `KERN_PROCARGS2` allocates a buffer of `KERN_ARGMAX` bytes — a megabyte
+    /// on macOS — per process. Doing that for 550 processes every two seconds
+    /// is half a gigabyte of allocation churn a tick, and it cost 12% of a core
+    /// in the first version of this app. A process monitor that is itself among
+    /// the top consumers is a bad joke.
+    ///
+    /// So identification runs on these cheap facts, and only the handful of
+    /// processes that might be agents get the full treatment.
+    struct Lightweight {
+        let pid: pid_t
+        let ppid: pid_t
+        let comm: String
+        let executablePath: String?
+        let tty: String?
+        /// Start time from the kernel table. Paired with the pid it identifies
+        /// a process uniquely — pids get recycled, start times do not repeat
+        /// for the same pid in any realistic window — so it is what makes the
+        /// caches below safe.
+        let startTime: time_t
+    }
+
+    /// A process cannot change its executable, so its path is worth caching for
+    /// as long as the pid lives. Without this we paid for `proc_pidpath` on
+    /// every process on every tick, for an answer that never changes.
+    ///
+    /// Keyed by pid *and* start time: pids are recycled, and a stale path on a
+    /// recycled pid would mislabel an unrelated process as an agent.
+    private static var pathCache: [pid_t: (startTime: time_t, path: String?)] = [:]
+    /// Same reasoning for the controlling terminal: a process keeps the one it
+    /// was born with, and `devname` is a lookup we would otherwise repeat for
+    /// every process on every tick.
+    private static var ttyCache: [pid_t: (startTime: time_t, tty: String?)] = [:]
+    private static let pathCacheLock = NSLock()
+
+    static func scanLightweight() -> [Lightweight] {
+        let uid = getuid()
+        let table = kernelProcessTable()
+            .filter { $0.kp_proc.p_pid > 0 && $0.kp_eproc.e_ucred.cr_uid == uid }
+
+        pathCacheLock.lock()
+        defer { pathCacheLock.unlock() }
+
+        var live = Set<pid_t>()
+        let result = table.map { kp -> Lightweight in
+            let pid = kp.kp_proc.p_pid
+            let started = kp.kp_proc.p_starttime.tv_sec
+            live.insert(pid)
+
+            let path: String?
+            if let cached = pathCache[pid], cached.startTime == started {
+                path = cached.path
+            } else {
+                path = executablePath(of: pid)
+                pathCache[pid] = (started, path)
+            }
+
+            let tty: String?
+            if let cached = ttyCache[pid], cached.startTime == started {
+                tty = cached.tty
+            } else {
+                tty = terminal(of: kp)
+                ttyCache[pid] = (started, tty)
+            }
+
+            return Lightweight(
+                pid: pid,
+                ppid: kp.kp_eproc.e_ppid,
+                comm: comm(of: kp),
+                executablePath: path,
+                tty: tty,
+                startTime: started
+            )
+        }
+
+        pathCache = pathCache.filter { live.contains($0.key) }
+        argumentsCache = argumentsCache.filter { live.contains($0.key) }
+        ttyCache = ttyCache.filter { live.contains($0.key) }
+        return result
+    }
+
+    /// A process cannot rewrite its own argument vector either, so this is
+    /// cached the same way. It matters more than the path cache: reading argv
+    /// allocates a megabyte, and without this the cost recurs every tick for
+    /// every `node` on the machine.
+    private static var argumentsCache: [pid_t: (startTime: time_t, arguments: [String])] = [:]
+
+    static func cachedArguments(of light: Lightweight) -> [String] {
+        pathCacheLock.lock()
+        defer { pathCacheLock.unlock() }
+        if let cached = argumentsCache[light.pid], cached.startTime == light.startTime {
+            return cached.arguments
+        }
+        let args = arguments(of: light.pid) ?? []
+        argumentsCache[light.pid] = (light.startTime, args)
+        return args
+    }
+
+    /// Fill in the expensive facts for one process.
+    static func enrich(_ light: Lightweight) -> Raw? {
+        // A process can exit between the table read and these lookups; rusage
+        // is the one we cannot do without, so it gates the row.
+        guard let usage = usage(of: light.pid) else { return nil }
+        return Raw(
+            pid: light.pid,
+            ppid: light.ppid,
+            comm: light.comm,
+            executablePath: light.executablePath,
+            arguments: cachedArguments(of: light),
+            workingDirectory: workingDirectory(of: light.pid),
+            residentBytes: usage.resident,
+            cpuSeconds: usage.cpuSeconds,
+            startedAt: usage.startedAt,
+            tty: light.tty,
+            lastTerminalActivity: light.tty.flatMap(lastWrite(toTerminal:))
+        )
+    }
+
+    /// Every process owned by the current user, fully populated. Used by the
+    /// tests and by anything that genuinely needs the lot.
     static func scan() -> [Raw] {
         let uid = getuid()
         return kernelProcessTable()
@@ -92,17 +214,22 @@ enum ProcessScanner {
     /// path, NUL padding, then `argc` NUL-terminated arguments, then the
     /// environment. We stop at `argc` so the environment — which holds tokens
     /// and API keys — is never read into memory we then display.
-    static func arguments(of pid: pid_t) -> [String]? {
-        var argmax: Int32 = 0
+    /// `KERN_ARGMAX` never changes while the system is up, so ask once.
+    private static let argmax: Int32 = {
+        var value: Int32 = 0
         var size = MemoryLayout<Int32>.size
-        var argmaxMib: [Int32] = [CTL_KERN, KERN_ARGMAX]
-        guard sysctl(&argmaxMib, 2, &argmax, &size, nil, 0) == 0, argmax > 0 else {
-            return nil
-        }
+        var mib: [Int32] = [CTL_KERN, KERN_ARGMAX]
+        guard sysctl(&mib, 2, &value, &size, nil, 0) == 0, value > 0 else { return 0 }
+        return value
+    }()
+
+    static func arguments(of pid: pid_t) -> [String]? {
+        let argmax = Self.argmax
+        guard argmax > 0 else { return nil }
 
         var buffer = [CChar](repeating: 0, count: Int(argmax))
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-        size = Int(argmax)
+        var size = Int(argmax)
         guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0,
               size > MemoryLayout<Int32>.size
         else { return nil }

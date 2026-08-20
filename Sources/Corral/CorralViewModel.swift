@@ -48,6 +48,7 @@ final class CorralViewModel: ObservableObject {
         inventory.refresh()
         groups = inventory.groups
         totals = inventory.totals
+        runningVersions = Set(groups.compactMap { $0.root.version })
         lastRefresh = inventory.lastRefresh
         if let selection, !groups.contains(where: { $0.root.pid == selection }) {
             self.selection = nil
@@ -90,6 +91,10 @@ final class CorralViewModel: ObservableObject {
     }
 
     var selectedGroup: AgentGroup? { selection.flatMap(group(withPid:)) }
+
+    /// Version strings currently executing. The disk side uses this so a
+    /// version in use is never offered for deletion, however old its number.
+    @Published private(set) var runningVersions: Set<String> = []
 
     // ─ Actions ──────────────────────────────────────────────────────────────
 

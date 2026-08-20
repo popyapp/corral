@@ -1,25 +1,63 @@
 import AppKit
 import SwiftUI
 
-struct ContentView: View {
+enum Pane: String, CaseIterable, Identifiable {
+    case agents, disk
+    var id: String { rawValue }
+    var title: String { self == .agents ? "Agents" : "On disk" }
+    var symbol: String { self == .agents ? "cpu" : "internaldrive" }
+}
+
+/// The window: the two things you came for — what is running right now, and
+/// what it has left behind.
+struct RootView: View {
     @EnvironmentObject private var model: CorralViewModel
-    @State private var confirmingReclaim = false
+    @EnvironmentObject private var disk: DiskViewModel
+    @State private var pane: Pane = .agents
 
     var body: some View {
         ZStack {
             Theme.windowBackground
             VStack(spacing: 0) {
-                HeaderView(confirmingReclaim: $confirmingReclaim)
-                Divider().opacity(0.5)
-                if let banner = model.banner {
-                    BannerView(banner: banner)
+                Picker("", selection: $pane) {
+                    ForEach(Pane.allCases) { pane in
+                        Label(pane.title, systemImage: pane.symbol).tag(pane)
+                    }
                 }
-                if model.groups.isEmpty {
-                    EmptyState()
-                } else {
-                    FilterBar()
-                    AgentList()
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 260)
+                .padding(.top, 11)
+
+                switch pane {
+                case .agents: ContentView()
+                case .disk: DiskView()
                 }
+            }
+        }
+        // A running version must never be offered for deletion, so the disk
+        // side is told what the agent side can see.
+        .onAppear { disk.runningVersions = model.runningVersions }
+        .onChange(of: model.runningVersions) { disk.runningVersions = $0 }
+    }
+}
+
+struct ContentView: View {
+    @EnvironmentObject private var model: CorralViewModel
+    @State private var confirmingReclaim = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HeaderView(confirmingReclaim: $confirmingReclaim)
+            Divider().opacity(0.5)
+            if let banner = model.banner {
+                BannerView(banner: banner)
+            }
+            if model.groups.isEmpty {
+                EmptyState()
+            } else {
+                FilterBar()
+                AgentList()
             }
         }
         .confirmationDialog(

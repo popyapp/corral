@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "Corral",
             path: "Sources/Corral"
-        )
+        ),
+        .testTarget(
+            name: "CorralTests",
+            dependencies: ["Corral"],
+            path: "Tests/CorralTests"
+        ),
     ]
 )
