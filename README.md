@@ -57,6 +57,9 @@ idle, what it spawned, and what it is costing you.
   controlling terminal, start time.
 - **What is safe to reclaim.** Agents idle for over an hour, totalled, behind one
   button.
+- **Search.** ⌘F in either pane. An agent matches on its project, path, tool,
+  version, pid, terminal, command line — and on what it spawned, so searching
+  for an MCP server finds the agent running it.
 - **What they left on disk.** A second tab measures every cache, superseded
   version and log the tools have accumulated, sorted by how safe it is to
   remove. On the machine this was written on that came to 14 GB.
@@ -123,8 +126,9 @@ swift run Corral --list     # the same inventory, printed
 ## Terminal mode
 
 ```sh
-Corral --list           # human-readable
-Corral --list --json    # machine-readable
+Corral --list                  # human-readable
+Corral --list --json           # machine-readable
+Corral --list --search recall   # only agents matching a project, tool or pid
 Corral --disk           # what is on disk (read-only; nothing is deleted)
 Corral --bench          # how much a refresh costs
 ```

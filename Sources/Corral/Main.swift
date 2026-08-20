@@ -18,7 +18,11 @@ enum Entry {
             return
         }
         if args.contains("--list") {
-            CLI.list(json: args.contains("--json"))
+            var filter: String?
+            if let i = args.firstIndex(of: "--search"), args.count > i + 1 {
+                filter = args[i + 1]
+            }
+            CLI.list(json: args.contains("--json"), search: filter)
             return
         }
         if args.contains("--help") || args.contains("-h") {
@@ -27,6 +31,8 @@ enum Entry {
 
               Corral               open the window
               Corral --list        print running agents
+              Corral --list --search <text>
+                                   only agents matching a project, tool or pid
               Corral --disk        print what the tools have left on disk
               Corral --list --json machine-readable output
               Corral --version     print version

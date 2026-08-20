@@ -13,6 +13,7 @@ final class CorralViewModel: ObservableObject {
     @Published var selection: pid_t?
     @Published var expanded: Set<pid_t> = []
     @Published var toolFilter: Tool?
+    @Published var query: String = ""
     @Published private(set) var lastRefresh: Date?
     @Published var banner: Banner?
 
@@ -58,8 +59,45 @@ final class CorralViewModel: ObservableObject {
     func activity(for pid: pid_t) -> Activity { inventory.activity(for: pid) }
 
     var visibleGroups: [AgentGroup] {
-        guard let toolFilter else { return groups }
-        return groups.filter { $0.root.tool == toolFilter }
+        var result = groups
+        if let toolFilter { result = result.filter { $0.root.tool == toolFilter } }
+
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return result }
+        return result.filter { matches($0, needle) }
+    }
+
+    /// Search across everything that identifies an agent — the project name and
+    /// its full path, the tool, the version, the pid, and the names of what it
+    /// spawned. Typing "3000" should find the agent whose dev server you are
+    /// looking for just as well as typing "api".
+    private func matches(_ group: AgentGroup, _ needle: String) -> Bool {
+        let root = group.root
+        var haystacks: [String] = [
+            root.tool.displayName,
+            root.tool.vendor,
+            "\(root.pid)",
+            root.comm,
+        ]
+        if let project = root.projectName { haystacks.append(project) }
+        if let path = root.workingDirectory { haystacks.append(path) }
+        if let version = root.version { haystacks.append(version) }
+        if let exec = root.executablePath { haystacks.append(exec) }
+        if let tty = root.tty { haystacks.append(tty) }
+        haystacks.append(root.arguments.joined(separator: " "))
+
+        for child in group.children {
+            haystacks.append(child.comm)
+            haystacks.append(child.role.label)
+            haystacks.append(child.arguments.joined(separator: " "))
+        }
+        return haystacks.contains { $0.lowercased().contains(needle) }
+    }
+
+    /// True when a search is on but hid everything — worth saying so rather
+    /// than showing an empty pane that looks like nothing is running.
+    var searchHidEverything: Bool {
+        !groups.isEmpty && visibleGroups.isEmpty
     }
 
     /// Tools actually present right now, for the filter bar. Showing a filter

@@ -125,3 +125,76 @@ struct Stat: View {
         .fixedSize()
     }
 }
+
+
+/// The search field, shared by both panes.
+struct SearchField: View {
+    @Binding var text: String
+    var placeholder: String
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.faint)
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.5))
+                .focused($focused)
+                .onSubmit { focused = false }
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.faint)
+                }
+                .buttonStyle(.plain)
+                .help("Clear")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(focused ? Color.accentColor.opacity(0.5) : Theme.hairline, lineWidth: 1)
+        )
+        .frame(width: 210)
+        // ⌘F is where everyone's hand already goes.
+        .background(
+            Button("") { focused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+        )
+    }
+}
+
+/// Shown when a search matched nothing, so an empty pane never reads as
+/// "nothing is running".
+struct NoMatches: View {
+    let query: String
+    let clear: () -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 26, weight: .light))
+                .foregroundStyle(Theme.faint)
+            Text("Nothing matches \u{201C}\(query)\u{201D}")
+                .font(.system(size: 13, weight: .medium))
+            Button("Clear search", action: clear)
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.accentColor)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+}

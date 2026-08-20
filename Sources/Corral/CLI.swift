@@ -5,7 +5,7 @@ import Foundation
 /// you can't open a GUI.
 enum CLI {
 
-    static func list(json: Bool) {
+    static func list(json: Bool, search: String? = nil) {
         let inventory = AgentInventory()
         inventory.refresh()
 
@@ -15,7 +15,32 @@ enum CLI {
         Thread.sleep(forTimeInterval: 1.0)
         inventory.refresh()
 
-        json ? printJSON(inventory) : printTable(inventory)
+        let needle = search?.trimmingCharacters(in: .whitespaces).lowercased()
+        let groups = (needle?.isEmpty == false)
+            ? inventory.groups.filter { matches($0, needle!) }
+            : inventory.groups
+
+        json ? printJSON(inventory, groups: groups)
+             : printTable(inventory, groups: groups, search: needle)
+    }
+
+    /// Same fields the window searches, so `--search api` and typing "api" in
+    /// the app agree about what matches.
+    static func matches(_ group: AgentGroup, _ needle: String) -> Bool {
+        let root = group.root
+        var haystacks = [root.tool.displayName, root.tool.vendor, "\(root.pid)", root.comm]
+        if let project = root.projectName { haystacks.append(project) }
+        if let path = root.workingDirectory { haystacks.append(path) }
+        if let version = root.version { haystacks.append(version) }
+        if let exec = root.executablePath { haystacks.append(exec) }
+        if let tty = root.tty { haystacks.append(tty) }
+        haystacks.append(root.arguments.joined(separator: " "))
+        for child in group.children {
+            haystacks.append(contentsOf: [
+                child.comm, child.role.label, child.arguments.joined(separator: " "),
+            ])
+        }
+        return haystacks.contains { $0.lowercased().contains(needle) }
     }
 
     /// `--disk`: what the tools have left behind, grouped by how safe it is to
@@ -103,18 +128,29 @@ enum CLI {
 
     // ─ Table ────────────────────────────────────────────────────────────────
 
-    private static func printTable(_ inventory: AgentInventory) {
-        let groups = inventory.groups
-        guard !groups.isEmpty else {
+    private static func printTable(
+        _ inventory: AgentInventory,
+        groups: [AgentGroup],
+        search: String?
+    ) {
+        guard !inventory.groups.isEmpty else {
             print("No AI coding agents running.")
+            return
+        }
+        guard !groups.isEmpty else {
+            print("Nothing matches \"\(search ?? "")\" — \(inventory.groups.count) agents running.")
             return
         }
 
         let totals = inventory.totals
         print("")
-        print("  \(totals.agents) agents · \(totals.processes) processes · "
-            + "\(totals.residentBytes.byteString) · \(totals.projects) projects"
-            + (totals.idleAgents > 0 ? " · \(totals.idleAgents) idle" : ""))
+        if groups.count != totals.agents {
+            print("  \(groups.count) of \(totals.agents) agents match \"\(search ?? "")\"")
+        } else {
+            print("  \(totals.agents) agents · \(totals.processes) processes · "
+                + "\(totals.residentBytes.byteString) · \(totals.projects) projects"
+                + (totals.idleAgents > 0 ? " · \(totals.idleAgents) idle" : ""))
+        }
         print("")
 
         for group in groups {
@@ -155,7 +191,7 @@ enum CLI {
 
     // ─ JSON ─────────────────────────────────────────────────────────────────
 
-    private static func printJSON(_ inventory: AgentInventory) {
+    private static func printJSON(_ inventory: AgentInventory, groups: [AgentGroup]) {
         let payload: [String: Any] = [
             "totals": [
                 "agents": inventory.totals.agents,
@@ -164,7 +200,7 @@ enum CLI {
                 "projects": inventory.totals.projects,
                 "idle_agents": inventory.totals.idleAgents,
             ],
-            "agents": inventory.groups.map { group in
+            "agents": groups.map { group in
                 describe(group, inventory: inventory)
             },
         ]

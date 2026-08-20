@@ -7,6 +7,7 @@ final class DiskViewModel: ObservableObject {
     @Published private(set) var items: [DiskItem] = []
     @Published private(set) var scanning = false
     @Published var selected: Set<String> = []
+    @Published var query: String = ""
     @Published var banner: CorralViewModel.Banner?
 
     /// Versions currently executing, which must never be offered for deletion
@@ -20,8 +21,19 @@ final class DiskViewModel: ObservableObject {
     var hasSelection: Bool { !selected.isEmpty }
 
     /// Grouped for display: safest first, biggest first within a group.
+    var visibleItems: [DiskItem] {
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return items }
+        return items.filter { item in
+            [item.title, item.displayPath, item.url.path, item.tool.displayName, item.detail]
+                .contains { $0.lowercased().contains(needle) }
+        }
+    }
+
+    var searchHidEverything: Bool { !items.isEmpty && visibleItems.isEmpty }
+
     var sections: [(safety: Safety, items: [DiskItem])] {
-        let grouped = Dictionary(grouping: items, by: \.safety)
+        let grouped = Dictionary(grouping: visibleItems, by: \.safety)
         return [Safety.safe, .redownload, .userData].compactMap { safety in
             guard let group = grouped[safety], !group.isEmpty else { return nil }
             return (safety, group.sorted { $0.size > $1.size })

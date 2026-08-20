@@ -65,6 +65,8 @@ struct DiskView: View {
 
             Spacer(minLength: 8)
 
+            SearchField(text: $disk.query, placeholder: "Cache, path, tool…")
+
             if disk.hasSelection {
                 Button {
                     confirming = true
@@ -116,6 +118,8 @@ struct DiskView: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity)
+        } else if disk.searchHidEverything {
+            NoMatches(query: disk.query) { disk.query = "" }
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {

@@ -57,7 +57,11 @@ struct ContentView: View {
                 EmptyState()
             } else {
                 FilterBar()
-                AgentList()
+                if model.searchHidEverything {
+                    NoMatches(query: model.query) { model.query = "" }
+                } else {
+                    AgentList()
+                }
             }
         }
         .confirmationDialog(
@@ -175,12 +179,8 @@ private struct FilterBar: View {
             ForEach(model.presentTools) { tool in
                 chip(title: tool.displayName, count: model.count(of: tool), tool: tool)
             }
-            Spacer()
-            if let last = model.lastRefresh {
-                Text("updated \(Date().timeIntervalSince(last) < 3 ? "just now" : "\(Int(Date().timeIntervalSince(last)))s ago")")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.faint)
-            }
+            Spacer(minLength: 10)
+            SearchField(text: $model.query, placeholder: "Project, tool, pid…")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 9)
