@@ -107,7 +107,16 @@ Everything goes to the Trash, never `unlink`.
 
 ## Install
 
-Build from source (macOS 13+, Xcode command line tools):
+Download the latest `Corral-<version>.dmg` from the
+[releases page](https://github.com/popyapp/corral/releases), open it and drag
+Corral to Applications. Every commit on `main` publishes a build, each one
+listing its SHA-256 and the exact commit it came from — `Corral --version`
+prints that commit back to you.
+
+Builds are ad-hoc signed rather than notarised, so the first launch needs
+right-click → Open.
+
+Or build from source (macOS 13+, Xcode command line tools):
 
 ```sh
 git clone https://github.com/popyapp/corral.git
@@ -187,7 +196,9 @@ an Apple-signed binary running from the wrong place — so the test builds its o
 
 ```sh
 make build   # swift build
+make test    # swift test
 make app     # build/Corral.app
+make dmg     # build/Corral-<version>.dmg, mounted and verified
 make list    # run the CLI against your own machine
 make icon    # regenerate the .icns (needs librsvg)
 make clean

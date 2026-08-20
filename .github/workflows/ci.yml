@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build & test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Package app bundle
+        run: ./scripts/make_app.sh
+
+      - name: Smoke test the packaged binary
+        run: |
+          build/Corral.app/Contents/MacOS/Corral --version
+          # --list is the whole app in one command: it scans, identifies and
+          # groups. If the runner has no agents it prints so and still exits 0.
+          build/Corral.app/Contents/MacOS/Corral --list
+          build/Corral.app/Contents/MacOS/Corral --disk
+
+      - name: Build DMG
+        run: ./scripts/make_dmg.sh

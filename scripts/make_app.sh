@@ -4,7 +4,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-VERSION="${VERSION:-1.0.0}"
+# One source of truth for the base version. CI appends the run number to it;
+# a local build just uses it as-is.
+VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo 0.0.0)}"
 COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 APP_NAME="Corral"
 BUNDLE_ID="dev.kulekci.Corral"

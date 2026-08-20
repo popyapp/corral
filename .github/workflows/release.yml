@@ -1,0 +1,79 @@
+name: Release
+
+# Every commit on main ships. The version is the base in ./VERSION plus the
+# run number, so it always moves forward without anyone remembering to bump
+# anything.
+#
+# Put [skip release] in a commit message to land something without cutting a
+# build — for a README fix, say.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish
+    runs-on: macos-15
+    if: "!contains(github.event.head_commit.message, '[skip release]')"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        run: |
+          BASE=$(cat VERSION)
+          echo "VERSION=$BASE.${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "COMMIT=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: swift test
+
+      - name: Build app bundle
+        run: VERSION="$VERSION" COMMIT="$COMMIT" ./scripts/make_app.sh
+
+      - name: Build DMG
+        run: VERSION="$VERSION" ./scripts/make_dmg.sh
+
+      - name: Also ship a zip
+        run: |
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent Corral.app "Corral-$VERSION.zip"
+
+      - name: Checksums
+        run: |
+          cd build
+          shasum -a 256 "Corral-$VERSION.dmg" > "Corral-$VERSION.dmg.sha256"
+          shasum -a 256 "Corral-$VERSION.zip" > "Corral-$VERSION.zip.sha256"
+
+      - name: Verify the build carries this commit
+        run: |
+          build/Corral.app/Contents/MacOS/Corral --version
+          build/Corral.app/Contents/MacOS/Corral --version | grep -q "$COMMIT"
+
+      - name: Compose release notes
+        run: |
+          {
+            echo "**Version:** \`$VERSION\` · **Build commit:** [\`$COMMIT\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA)"
+            echo ""
+            echo "| Download | SHA-256 |"
+            echo "|---|---|"
+            echo "| \`Corral-$VERSION.dmg\` | \`$(cut -d' ' -f1 "build/Corral-$VERSION.dmg.sha256")\` |"
+            echo "| \`Corral-$VERSION.zip\` | \`$(cut -d' ' -f1 "build/Corral-$VERSION.zip.sha256")\` |"
+            echo ""
+            cat .github/release-notes-footer.md
+          } > /tmp/release-notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" \
+            "build/Corral-$VERSION.dmg" \
+            "build/Corral-$VERSION.dmg.sha256" \
+            "build/Corral-$VERSION.zip" \
+            "build/Corral-$VERSION.zip.sha256" \
+            --title "Corral $VERSION" \
+            --generate-notes \
+            --notes-file /tmp/release-notes.md
