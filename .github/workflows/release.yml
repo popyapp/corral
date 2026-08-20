@@ -10,6 +10,9 @@ on:
       - "**/*.md"
       - "LICENSE"
       - ".github/release-notes-footer.md"
+  # …which means a docs-only push leaves the latest release behind the branch,
+  # and a history rewrite leaves none at all. This is the way back.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -34,7 +37,9 @@ jobs:
         run: |
           SUBJECT=$(git log -1 --pretty=%s)
           echo "subject: $SUBJECT"
-          if [[ "$SUBJECT" == *"[skip release]"* ]]; then
+          # A manual run is a deliberate act and is never talked out of it.
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" \
+                && "$SUBJECT" == *"[skip release]"* ]]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "skipping: the subject line asks us to"
           else
