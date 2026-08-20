@@ -2,24 +2,47 @@
   <!-- macOS app icon: Big Sur-style rounded rect inset in a 1024 canvas with
        transparent margins. Regenerate the .icns with scripts/make_icon.sh.
 
-       The mark is a pen seen from above, open at one side: a gate, not a
-       letterform. It happens to read as a C, which is no bad thing. Inside,
-       one agent still awake and two gone quiet — the two dim dots drop out
-       below ~32px, which is fine: the enclosure is the mark. -->
+       A gauge. Earlier drafts tried to draw a corral — a fence, a pen, a lasso —
+       and every one of them read as something else at icon size: a hashtag, a
+       magnifying glass, a gear, a face. The name carries the metaphor; the icon
+       carries the job. The needle rests low on purpose: the agents are idle,
+       which is the state this app was built to show you. -->
   <defs>
-    <linearGradient id="g" x1="100" y1="100" x2="924" y2="924" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#f0a878"/><stop offset="52%" stop-color="#d97757"/><stop offset="100%" stop-color="#a8452f"/>
+    <linearGradient id="bg" x1="100" y1="100" x2="924" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f2b183"/>
+      <stop offset="55%" stop-color="#d97757"/>
+      <stop offset="100%" stop-color="#9e3f2b"/>
     </linearGradient>
+    <linearGradient id="sheen" x1="512" y1="100" x2="512" y2="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#fff" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="22" flood-color="#000000" flood-opacity="0.3"/>
+    </filter>
   </defs>
-  <rect x="0" y="0" width="1024" height="1024" rx="0" fill="url(#g)"/>
-  <!-- Pen seen from above. The gap is narrow and on the right: a gate, not a
-       letterform. -->
-  <path d="M690 296 H404 a108 108 0 0 0 -108 108 v216 a108 108 0 0 0 108 108 h286"
-        fill="none" stroke="#fff" stroke-width="82" stroke-linecap="round"/>
-  <path d="M690 296 a108 108 0 0 1 38 30" fill="none" stroke="#fff" stroke-width="82" stroke-linecap="round"/>
-  <path d="M690 728 a108 108 0 0 0 38 -30" fill="none" stroke="#fff" stroke-width="82" stroke-linecap="round"/>
-  <!-- one awake, two asleep -->
-  <circle cx="470" cy="512" r="56" fill="#fff"/>
-  <circle cx="622" cy="424" r="36" fill="#8a3520" fill-opacity="0.5"/>
-  <circle cx="622" cy="600" r="36" fill="#8a3520" fill-opacity="0.5"/>
+
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#sheen)"/>
+
+  <!-- dial face -->
+  <circle cx="512" cy="540" r="190" fill="rgba(255,255,255,0.17)"/>
+
+  <!-- graduations, outside the arc -->
+  <g stroke="rgba(255,255,255,0.75)" stroke-linecap="round" stroke-width="17">
+    <path d="M296 452 l-46 -22"/>
+    <path d="M364 344 l-30 -42"/>
+    <path d="M512 296 v-48"/>
+    <path d="M660 344 l30 -42"/>
+    <path d="M728 452 l46 -22"/>
+  </g>
+
+  <!-- the scale -->
+  <path d="M326 636 A208 208 0 1 1 698 636" stroke="#fff" stroke-width="46"
+        stroke-linecap="round" fill="none"/>
+
+  <!-- needle, resting low-left: quiet -->
+  <path d="M508 578 L386 470" stroke="#fff" stroke-width="38" stroke-linecap="round"/>
+  <circle cx="512" cy="584" r="48" fill="#fff"/>
+  <circle cx="512" cy="584" r="18" fill="#bf5c3c"/>
 </svg>

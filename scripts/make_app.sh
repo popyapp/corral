@@ -50,8 +50,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>MIT License</string>
-        </dict>
-    </array>
 </dict>
 </plist>
 PLIST
