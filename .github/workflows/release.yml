@@ -1,23 +1,51 @@
 name: Release
 
-# Every commit on main ships. The version is the base in ./VERSION plus the
-# run number, so it always moves forward without anyone remembering to bump
-# anything.
-#
-# Put [skip release] in a commit message to land something without cutting a
-# build — for a README fix, say.
+# Every commit on main ships. The version is the base in ./VERSION plus the run
+# number, so it moves forward without anyone remembering to bump anything.
 on:
   push:
     branches: [main]
+    # Documentation does not need a build. Everything else does.
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+      - ".github/release-notes-footer.md"
 
 permissions:
   contents: write
 
 jobs:
+  # Whether to release is decided from the commit *subject* only.
+  #
+  # This started as a job-level `if: !contains(head_commit.message, ...)` and
+  # the very first commit skipped itself — its body explained the escape hatch
+  # and so contained the magic words. A flag you can trip by writing about it
+  # is not a flag, so the check now reads the first line and nothing else.
+  guard:
+    name: Should we release?
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - id: check
+        run: |
+          SUBJECT=$(git log -1 --pretty=%s)
+          echo "subject: $SUBJECT"
+          if [[ "$SUBJECT" == *"[skip release]"* ]]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "skipping: the subject line asks us to"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   release:
     name: Build & publish
+    needs: guard
+    if: needs.guard.outputs.release == 'true'
     runs-on: macos-15
-    if: "!contains(github.event.head_commit.message, '[skip release]')"
     steps:
       - uses: actions/checkout@v4
 

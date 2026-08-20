@@ -57,6 +57,10 @@ idle, what it spawned, and what it is costing you.
   controlling terminal, start time.
 - **What is safe to reclaim.** Agents idle for over an hour, totalled, behind one
   button.
+- **A menu bar item.** Corral keeps running with its window closed, and the top
+  right shows the busiest agent's CPU — or just how many are running when
+  nothing is working hard. Hover for the summary, click for the list, click a
+  row to open the window on that agent.
 - **Search.** ⌘F in either pane. An agent matches on its project, path, tool,
   version, pid, terminal, command line — and on what it spawned, so searching
   for an MCP server finds the agent running it.
