@@ -1,0 +1,39 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- macOS app icon: Big Sur-style rounded rect inset in a 1024 canvas with
+       transparent margins. Regenerate the .icns with scripts/make_icon.sh.
+
+       The mark is a corral: three posts and two rails, with the agents as dots
+       penned inside — one still lit, the rest gone quiet. -->
+  <defs>
+    <linearGradient id="co-bg" x1="100" y1="100" x2="924" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f0a878"/>
+      <stop offset="52%" stop-color="#d97757"/>
+      <stop offset="100%" stop-color="#a8452f"/>
+    </linearGradient>
+    <filter id="co-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="22" flood-color="#000" flood-opacity="0.24"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#co-shadow)">
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#co-bg)"/>
+  </g>
+
+  <!-- Rails -->
+  <g stroke="#fff" stroke-linecap="round" stroke-opacity="0.95">
+    <path d="M232 430 H792" stroke-width="42"/>
+    <path d="M232 604 H792" stroke-width="42"/>
+  </g>
+
+  <!-- Posts -->
+  <g stroke="#fff" stroke-linecap="round" stroke-opacity="0.95" stroke-width="42">
+    <path d="M300 336 V698"/>
+    <path d="M512 336 V698"/>
+    <path d="M724 336 V698"/>
+  </g>
+
+  <!-- Penned agents: one awake, two asleep -->
+  <circle cx="406" cy="517" r="34" fill="#3b1c12" fill-opacity="0.55"/>
+  <circle cx="618" cy="517" r="34" fill="#3b1c12" fill-opacity="0.55"/>
+  <circle cx="512" cy="517" r="38" fill="#fff"/>
+</svg>
