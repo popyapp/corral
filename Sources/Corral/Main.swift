@@ -54,6 +54,14 @@ struct CorralApp: App {
                 .frame(minWidth: 880, minHeight: 540)
         }
         .windowToolbarStyle(.unifiedCompact)
+        .commands {
+            // The stock item reads Info.plist directly and cannot show the
+            // commit, so it is replaced rather than supplemented — two About
+            // items would be worse than one incomplete one.
+            CommandGroup(replacing: .appInfo) {
+                Button("About Corral") { AboutPanel.show() }
+            }
+        }
     }
 }
 

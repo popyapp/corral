@@ -104,42 +104,27 @@ private struct HeaderView: View {
 
             Divider().frame(height: 26).opacity(0.4)
 
-            // One click anywhere on the numbers changes how far back every
-            // sparkline looks, so the range is discoverable without spending a
-            // control on it.
+            // Each figure the graph can plot doubles as its selector.
             HStack(alignment: .center, spacing: 22) {
-                Stat(
-                    value: "\(model.totals.agents)",
-                    label: "agents",
-                    trend: model.trends.agents.series(model.trendRange),
-                    zeroBased: true
-                )
-                Stat(
-                    value: model.totals.residentBytes.byteString,
-                    label: "memory",
-                    trend: model.trends.memory.series(model.trendRange)
-                )
-                Stat(
-                    value: "\(model.totals.projects)",
-                    label: "projects",
-                    trend: model.trends.projects.series(model.trendRange),
-                    zeroBased: true
-                )
-                Stat(
-                    value: String(format: "%.1f", model.trends.cpu.latest ?? 0),
-                    label: "cores",
-                    trend: model.trends.cpu.series(model.trendRange),
-                    zeroBased: true
+                plottable(.agents, "\(model.totals.agents)", "agents")
+                plottable(.memory, model.totals.residentBytes.byteString, "memory")
+                plottable(.projects, "\(model.totals.projects)", "projects")
+                plottable(
+                    .cpu,
+                    String(format: "%.1f", model.trends.cpu.latest ?? 0),
+                    "cores"
                 )
                 if model.totals.oldest > 0 {
+                    // Nothing records a history for this one, so it is a
+                    // readout rather than a selector.
                     Stat(value: model.totals.oldest.durationString, label: "oldest")
                 }
             }
-            .contentShape(Rectangle())
-            .onTapGesture { model.cycleTrendRange() }
-            .help(trendHelp)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 12)
+
+            HeaderGraph()
+                .frame(minWidth: 130, maxWidth: 320, maxHeight: 40)
 
             if !model.staleGroups.isEmpty {
                 Button {
@@ -169,10 +154,14 @@ private struct HeaderView: View {
         .padding(.vertical, 12)
     }
 
-    private var trendHelp: String {
-        "Last \(model.trendRange.label), averaged into 30-second steps. "
-        + "Click to switch between 15m, 1h and 3h. "
-        + "A break in a line is a stretch when Corral was not running."
+    private func plottable(_ metric: TrendMetric, _ value: String, _ label: String) -> some View {
+        Button {
+            model.trendMetric = metric
+        } label: {
+            Stat(value: value, label: label, selected: model.trendMetric == metric)
+        }
+        .buttonStyle(.plain)
+        .help("Plot \(metric.label.lowercased()) in the graph")
     }
 
     /// The button says how much it frees; the tooltip has to say what it will
@@ -187,6 +176,82 @@ private struct HeaderView: View {
 
         Each is asked to exit cleanly, together with the child processes it         started — dev servers, MCP servers, the caffeinate that has been keeping         this Mac awake. Agents that are working, and any waiting on a build they         started, are never included.
         """
+    }
+}
+
+/// The header's one graph.
+///
+/// It sits in the gap on the right rather than under the numbers because a
+/// chart 68 points wide is a decoration; one this size can actually be read.
+/// Which figure it plots is chosen by clicking that figure, and clicking the
+/// graph itself changes how far back it looks.
+private struct HeaderGraph: View {
+    @EnvironmentObject private var model: CorralViewModel
+
+    var body: some View {
+        let metric = model.trendMetric
+        let series = model.trends.series(for: metric).series(model.trendRange)
+
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Text(metric.label.uppercased())
+                    .font(.system(size: 8, weight: .semibold))
+                    .tracking(0.7)
+                    .foregroundStyle(Theme.trend)
+                Text(model.trendRange.label)
+                    .font(.system(size: 8, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(Theme.faint)
+                Spacer(minLength: 4)
+                Text(reading(metric))
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Theme.subtle)
+            }
+
+            if series.count >= 3 {
+                TrendGraph(buckets: series, zeroBased: metric.zeroBased)
+                    .frame(maxWidth: .infinity)
+            } else {
+                // Two samples is a segment, not a trend. Saying it is still
+                // filling is better than drawing a shape that means nothing.
+                HStack {
+                    Text("collecting…")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.faint)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(Theme.hairline, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { model.cycleTrendRange() }
+        .help(
+            "\(metric.label) over the last \(model.trendRange.label), in "
+            + "30-second steps. Click to switch between 15m, 1h and 3h; click a "
+            + "figure on the left to plot it instead. A missing column is a "
+            + "stretch when Corral was not running."
+        )
+    }
+
+    /// The current value, in the metric's own units — the graph has no axis, so
+    /// the number beside it is what gives the bars a scale.
+    private func reading(_ metric: TrendMetric) -> String {
+        let latest = model.trends.series(for: metric).latest ?? 0
+        switch metric {
+        case .cpu: return String(format: "%.2f cores", latest)
+        case .memory: return UInt64(max(0, latest)).byteString
+        case .agents, .projects: return String(format: "%.0f", latest)
+        }
     }
 }
 

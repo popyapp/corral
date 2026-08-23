@@ -100,93 +100,149 @@ struct Trends {
     var memory = TrendBuffer()
     var agents = TrendBuffer()
     var projects = TrendBuffer()
+
+    func series(for metric: TrendMetric) -> TrendBuffer {
+        switch metric {
+        case .cpu: return cpu
+        case .memory: return memory
+        case .agents: return agents
+        case .projects: return projects
+        }
+    }
 }
 
-/// A small filled line chart with no axes, labels or interaction.
+/// Which number the header graph is plotting.
 ///
-/// It answers one question — is this going up or down — and anything else it
-/// drew would compete with the number printed directly above it.
-struct Sparkline: View {
+/// One graph rather than one per figure: four thumbnails at this size say less
+/// than a single readable chart, and the question is almost always about one
+/// number at a time. CPU is the default because it is the one that made you
+/// open the app.
+enum TrendMetric: String, CaseIterable, Identifiable {
+    case cpu, memory, agents, projects
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .cpu: return "CPU"
+        case .memory: return "Memory"
+        case .agents: return "Agents"
+        case .projects: return "Projects"
+        }
+    }
+
+    /// Counts and CPU are measured from zero, so their axis starts there.
+    /// Memory is not: every agent holds a hundred megabytes before it does
+    /// anything, and a zero floor would flatten every real change into nothing.
+    var zeroBased: Bool { self != .memory }
+}
+
+/// A small history graph: discrete columns on a faint grid.
+///
+/// Deliberately an instrument readout rather than an infographic. This app's
+/// whole claim is that it is Activity Monitor for agents, and Activity
+/// Monitor's own CPU history is bars on a graticule — a filled gradient curve
+/// would be the wrong dialect, and at this size it also reads as one soft blob
+/// where the point is to see individual movements.
+///
+/// Buckets are resampled to a fixed column count so a 3-hour range and a
+/// 15-minute one draw the same number of bars at the same width, instead of
+/// the longer range collapsing into a solid block.
+struct TrendGraph: View {
     let buckets: [TrendBuffer.Bucket]
     var color: Color = Theme.trend
     /// Forces the y-axis to start at zero. Right for counts, where a floor of
     /// zero is meaningful; wrong for memory, where every agent holds a hundred
     /// megabytes and a zero floor would flatten every real change into nothing.
     var zeroBased = false
+    var maxColumns = 22
 
     var body: some View {
-        GeometryReader { geometry in
-            let points = layout(in: geometry.size)
-            ZStack {
-                if points.count >= 2 {
-                    fill(points, height: geometry.size.height)
-                        .fill(
-                            LinearGradient(
-                                colors: [color.opacity(0.28), color.opacity(0.02)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                    line(points)
-                        .stroke(color, style: StrokeStyle(lineWidth: 1.2, lineJoin: .round))
-                }
-            }
+        Canvas(opaque: false, rendersAsynchronously: false) { context, size in
+            let columns = resample()
+            guard columns.contains(where: { $0 != nil }) else { return }
+
+            draw(grid: context, size: size)
+            draw(columns: columns, context: context, size: size)
         }
     }
 
-    // ─ Geometry ─────────────────────────────────────────────────────────────
+    // ─ Data ─────────────────────────────────────────────────────────────────
 
-    /// nil marks a break in the data — a stretch where Corral was not running.
-    private func layout(in size: CGSize) -> [CGPoint?] {
-        guard let first = buckets.first, let last = buckets.last, buckets.count >= 2 else {
-            return []
+    /// One slot per column, nil where no bucket landed — a stretch when Corral
+    /// was not running leaves a hole rather than a bar borrowed from its
+    /// neighbours.
+    private func resample() -> [Double?] {
+        guard let first = buckets.first, let last = buckets.last else { return [] }
+        let span = last.index - first.index
+        // Never more columns than there are buckets to fill them: early on,
+        // wide bars are honest, and holes would look like missing data.
+        let count = max(1, min(maxColumns, span + 1))
+
+        var sums = [Double](repeating: 0, count: count)
+        var hits = [Int](repeating: 0, count: count)
+        for bucket in buckets {
+            let position = span == 0
+                ? 0
+                : Int((Double(bucket.index - first.index) / Double(span)) * Double(count - 1))
+            let slot = min(max(position, 0), count - 1)
+            sums[slot] += bucket.value
+            hits[slot] += 1
         }
-        let span = Double(max(last.index - first.index, 1))
-        let values = buckets.map(\.value)
+        return (0..<count).map { hits[$0] == 0 ? nil : sums[$0] / Double(hits[$0]) }
+    }
+
+    // ─ Drawing ──────────────────────────────────────────────────────────────
+
+    private func draw(grid context: GraphicsContext, size: CGSize) {
+        let ink = Color.primary.opacity(0.10)
+
+        var midline = Path()
+        midline.move(to: CGPoint(x: 0, y: (size.height - 1) / 2))
+        midline.addLine(to: CGPoint(x: size.width, y: (size.height - 1) / 2))
+        context.stroke(
+            midline,
+            with: .color(ink),
+            style: StrokeStyle(lineWidth: 0.5, dash: [1.5, 2.5])
+        )
+
+        var baseline = Path()
+        baseline.move(to: CGPoint(x: 0, y: size.height - 0.25))
+        baseline.addLine(to: CGPoint(x: size.width, y: size.height - 0.25))
+        context.stroke(baseline, with: .color(ink), lineWidth: 0.5)
+    }
+
+    private func draw(columns: [Double?], context: GraphicsContext, size: CGSize) {
+        let values = columns.compactMap { $0 }
         let top = values.max() ?? 0
         let bottom = zeroBased ? 0 : (values.min() ?? 0)
-        // A dead-flat series would divide by zero; draw it through the middle.
         let range = top - bottom
         let flat = range < .ulpOfOne
 
-        var result: [CGPoint?] = []
-        var previousIndex: Int?
-        for bucket in buckets {
-            if let previous = previousIndex, bucket.index - previous > 1 {
-                result.append(nil)
-            }
-            let x = Double(bucket.index - first.index) / span * size.width
-            let normalized = flat ? 0.5 : (bucket.value - bottom) / range
-            // Inset by a hair top and bottom so a peak is not clipped by the
-            // frame's edge.
-            let y = size.height - 1 - normalized * (size.height - 2)
-            result.append(CGPoint(x: x, y: y))
-            previousIndex = bucket.index
-        }
-        return result
-    }
+        let slot = size.width / CGFloat(columns.count)
+        let barWidth = max(1, slot - 1)
+        // The baseline owns the bottom half-pixel; bars sit on it.
+        let plotHeight = size.height - 1
 
-    private func line(_ points: [CGPoint?]) -> Path {
-        var path = Path()
-        var penDown = false
-        for point in points {
-            guard let point else { penDown = false; continue }
-            if penDown { path.addLine(to: point) } else { path.move(to: point) }
-            penDown = true
+        for (index, value) in columns.enumerated() {
+            guard let value else { continue }
+            let normalized = flat ? 0.5 : (value - bottom) / range
+            // A minimum of one pixel: a genuine zero still leaves a tick, so an
+            // empty column and a zero column do not look the same.
+            let height = max(1, CGFloat(normalized) * plotHeight)
+            let rect = CGRect(
+                x: CGFloat(index) * slot,
+                y: plotHeight - height,
+                width: barWidth,
+                height: height
+            )
+            // The newest column is the live one, so it carries full weight and
+            // the history behind it recedes.
+            let isLatest = index == columns.count - 1
+            context.fill(
+                Path(rect),
+                with: .color(color.opacity(isLatest ? 1.0 : 0.55))
+            )
         }
-        return path
-    }
-
-    /// Only the last unbroken run is filled: shading across a gap would imply
-    /// the area under a line that was never drawn.
-    private func fill(_ points: [CGPoint?], height: CGFloat) -> Path {
-        let run = points.split(whereSeparator: { $0 == nil }).last?.compactMap { $0 } ?? []
-        guard run.count >= 2, let first = run.first, let last = run.last else { return Path() }
-        var path = Path()
-        path.move(to: CGPoint(x: first.x, y: height))
-        for point in run { path.addLine(to: point) }
-        path.addLine(to: CGPoint(x: last.x, y: height))
-        path.closeSubpath()
-        return path
     }
 }

@@ -65,12 +65,12 @@ idle, what it spawned, and what it is costing you.
 - **The tool's own icon.** Taken from the copy of Claude, Cursor or ChatGPT
   already installed on your Mac, the same way Finder draws it. Corral ships no
   brand artwork; a tool you do not have installed falls back to a symbol.
-- **Where the numbers have been.** Each header figure carries a sparkline of its
-  own last hour. "2.92 GB" cannot tell you whether that is the calm after you
-  closed six agents or the start of a climb; the line can. Click the numbers to
-  switch between 15 minutes, 1 hour and 3 hours. A break in a line is a stretch
-  when Corral was not running — it will not draw a flat line across a sleep it
-  did not observe.
+- **Where the numbers have been.** One graph in the header, plotting CPU by
+  default. Click a figure — agents, memory, projects, cores — to plot that one
+  instead; click the graph to switch between 15 minutes, 1 hour and 3 hours.
+  "2.92 GB" cannot tell you whether that is the calm after you closed six agents
+  or the start of a climb; the graph can. A missing column is a stretch when
+  Corral was not running — it will not draw across a sleep it did not observe.
 - **Search.** ⌘F in either pane. An agent matches on its project, path, tool,
   version, pid, terminal, command line — and on what it spawned, so searching
   for an MCP server finds the agent running it.
@@ -159,7 +159,13 @@ Download the latest `Corral-<version>.dmg` from the
 [releases page](https://github.com/popyapp/corral/releases), open it and drag
 Corral to Applications. Every commit on `main` publishes a build, each one
 listing its SHA-256 and the exact commit it came from — `Corral --version`
-prints that commit back to you.
+prints that commit back to you, and **About Corral** shows the same pair as
+`Version 0.1.4 (a1b2c3d)`, with the hash linking to that commit on GitHub.
+
+A build made locally with `make app` has no release number, so it reports the
+base version from `VERSION` (`0.1`) rather than a three-part one; if the tree
+had uncommitted changes, the hash carries a `-dirty` suffix and About says the
+binary matches no commit.
 
 Builds are ad-hoc signed rather than notarised, so the first launch needs
 right-click → Open.

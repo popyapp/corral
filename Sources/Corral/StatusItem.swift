@@ -171,6 +171,16 @@ final class StatusItemController {
         open.target = MenuBuilder.shared
         menu.addItem(open)
 
+        // Corral is usable with its window closed, so "which build am I
+        // running" has to be answerable from here too.
+        let about = NSMenuItem(
+            title: "About Corral",
+            action: #selector(MenuBuilder.showAbout),
+            keyEquivalent: ""
+        )
+        about.target = MenuBuilder.shared
+        menu.addItem(about)
+
         let quit = NSMenuItem(
             title: "Quit Corral",
             action: #selector(NSApplication.terminate(_:)),
@@ -238,5 +248,9 @@ final class MenuBuilder: NSObject, NSMenuDelegate {
 
     @objc func openWindow() {
         MainActor.assumeIsolated { controller?.open(selecting: nil) }
+    }
+
+    @objc func showAbout() {
+        MainActor.assumeIsolated { AboutPanel.show() }
     }
 }

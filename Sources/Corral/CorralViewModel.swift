@@ -16,8 +16,10 @@ final class CorralViewModel: ObservableObject {
     @Published var query: String = ""
     @Published private(set) var lastRefresh: Date?
     @Published private(set) var trends = Trends()
-    /// How far back the header sparklines look. Clicking one cycles it.
+    /// How far back the header graph looks. Clicking it cycles the range.
     @Published var trendRange: TrendRange = .hour
+    /// Which figure the header graph plots. Clicking a number selects it.
+    @Published var trendMetric: TrendMetric = .cpu
     @Published var banner: Banner?
 
     struct Banner: Identifiable, Equatable {

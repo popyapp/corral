@@ -7,7 +7,15 @@ cd "$(dirname "$0")/.."
 # One source of truth for the base version. CI appends the run number to it;
 # a local build just uses it as-is.
 VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo 0.0.0)}"
-COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+# A binary built from a tree with uncommitted changes corresponds to no commit,
+# and the About panel says so rather than naming a commit it does not match.
+# CI checks out clean, and passes COMMIT in anyway, so this only fires locally.
+if [ -z "${COMMIT:-}" ]; then
+    COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    if [ "$COMMIT" != "unknown" ] && [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+        COMMIT="$COMMIT-dirty"
+    fi
+fi
 APP_NAME="Corral"
 BUNDLE_ID="dev.kulekci.Corral"
 OUT_DIR="build"

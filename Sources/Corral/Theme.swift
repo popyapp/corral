@@ -128,17 +128,16 @@ struct Pill: View {
     }
 }
 
-/// A labelled number in the header, with the shape of how it got there.
+/// A labelled number in the header.
 ///
-/// The sparkline is the point of the pairing: "2.92 GB" alone cannot tell you
-/// whether that is the calm after you closed six agents or the start of a climb.
+/// When it is one of the figures the graph can plot, it doubles as the graph's
+/// selector: the underline marks which one is on screen, so the control and its
+/// output are not in two different places.
 struct Stat: View {
     let value: String
     let label: String
     var tint: Color = .primary
-    var trend: [TrendBuffer.Bucket] = []
-    /// See `Sparkline.zeroBased` — true for counts, false for memory.
-    var zeroBased = false
+    var selected = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -149,14 +148,13 @@ struct Stat: View {
             Text(label.uppercased())
                 .font(.system(size: 9, weight: .semibold))
                 .tracking(0.8)
-                .foregroundStyle(Theme.faint)
-            // Three buckets is the floor for a line that means anything; below
-            // that the space stays empty rather than showing a misleading dot.
-            if trend.count >= 3 {
-                Sparkline(buckets: trend, zeroBased: zeroBased)
-                    .frame(width: 60, height: 13)
-                    .padding(.top, 3)
-            }
+                .foregroundStyle(selected ? Theme.trend : Theme.faint)
+            // Reserved whether or not it is drawn, so selecting a figure does
+            // not nudge the row's height.
+            Rectangle()
+                .fill(selected ? Theme.trend : .clear)
+                .frame(height: 1.5)
+                .padding(.top, 2)
         }
         .fixedSize()
     }
