@@ -56,11 +56,21 @@ idle, what it spawned, and what it is costing you.
 - **Where it came from.** Executable path, full command line, parent process,
   controlling terminal, start time.
 - **What is safe to reclaim.** Agents idle for over an hour, totalled, behind one
-  button.
+  button. Anything still working — including an agent waiting on a build it
+  started — is never in that total.
 - **A menu bar item.** Corral keeps running with its window closed, and the top
   right shows the busiest agent's CPU — or just how many are running when
   nothing is working hard. Hover for the summary, click for the list, click a
   row to open the window on that agent.
+- **The tool's own icon.** Taken from the copy of Claude, Cursor or ChatGPT
+  already installed on your Mac, the same way Finder draws it. Corral ships no
+  brand artwork; a tool you do not have installed falls back to a symbol.
+- **Where the numbers have been.** Each header figure carries a sparkline of its
+  own last hour. "2.92 GB" cannot tell you whether that is the calm after you
+  closed six agents or the start of a climb; the line can. Click the numbers to
+  switch between 15 minutes, 1 hour and 3 hours. A break in a line is a stretch
+  when Corral was not running — it will not draw a flat line across a sleep it
+  did not observe.
 - **Search.** ⌘F in either pane. An agent matches on its project, path, tool,
   version, pid, terminal, command line — and on what it spawned, so searching
   for an MCP server finds the agent running it.
@@ -70,6 +80,40 @@ idle, what it spawned, and what it is costing you.
 
 Supported: **Claude Code**, **Claude** (desktop), **Codex**, **Cursor** and its
 CLI agent, **Windsurf**.
+
+## What the colours mean
+
+Every row carries a dot. There are five states, and each one is a different
+decision:
+
+| | State | Means |
+|---|---|---|
+| 🟢 | **working** | Using the CPU, or writing to its terminal right now. |
+| 🔵 | **waiting** | The agent is parked, but a build, test run or MCP server *it started* is busy. It is waiting on its own work. |
+| ⚪ | **idle** | Nothing for under an hour. Normal between prompts. |
+| 🟡 | **idle** (amber) | Nothing for an hour to a day. Worth a look. |
+| 🔴 | **abandoned** | Nothing for over a day. Almost certainly forgotten. |
+
+The same legend is in the app, behind the **?** next to the search field.
+
+**How it is measured, and what that cannot see.** Corral watches two things: how
+much CPU a process has used since the last sample, and the last write to its
+controlling terminal. It does not watch the network, so an agent waiting on a
+reply from the model is, strictly, doing neither. In practice that gap stays
+green: CLI agents animate a thinking indicator while they wait, and that redraw
+is a terminal write. Output within the last 30 seconds counts as working.
+
+Two honest limits:
+
+- **`waiting` is inferred from children, not from the agent.** A `swift build`
+  burning a core proves its agent is working; an agent thinking quietly with no
+  children and no output does not look busy, because nothing observable says it
+  is. Before this existed, such a group read as plain `idle` — and was offered
+  up to the Reclaim button along with the genuinely forgotten ones.
+- **An agent with no controlling terminal has only CPU to go on.** Its idle time
+  can then only reach back to when Corral opened, which is why those rows say
+  "quiet since Corral opened" rather than "idle", and why they are never
+  bulk-stopped. `corral list` makes the same distinction in text.
 
 ## What it costs to run
 

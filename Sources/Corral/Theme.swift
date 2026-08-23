@@ -57,6 +57,29 @@ enum Theme {
         }
     }
 
+    // ─ Agent state ──────────────────────────────────────────────────────────
+
+    /// Colour and wording for what a group is doing. Five states, each one a
+    /// different decision: leave it, leave it, ignore it, look at it, kill it.
+    static func color(for state: AgentState) -> Color {
+        switch state {
+        case .starting: return Severity.recent.color
+        case .working: return Severity.active.color
+        case .waiting: return waiting
+        case .idle: return Severity.recent.color
+        case .stale: return Severity.stale.color
+        case .abandoned: return Severity.abandoned.color
+        }
+    }
+
+    /// Blue for "busy on something it started". Deliberately not green: the
+    /// agent itself is parked, and deliberately not amber: nothing is wrong.
+    static let waiting = Color(red: 0.28, green: 0.56, blue: 0.90)
+
+    /// Sparkline ink. A toned-down terminal green — recognisably the colour of
+    /// scrolling text, without the neon that would vibrate on a light window.
+    static let trend = Color(red: 0.18, green: 0.72, blue: 0.42)
+
     // ─ Surfaces ─────────────────────────────────────────────────────────────
 
     static let rowCorner: CGFloat = 10
@@ -105,11 +128,17 @@ struct Pill: View {
     }
 }
 
-/// A labelled number in the header.
+/// A labelled number in the header, with the shape of how it got there.
+///
+/// The sparkline is the point of the pairing: "2.92 GB" alone cannot tell you
+/// whether that is the calm after you closed six agents or the start of a climb.
 struct Stat: View {
     let value: String
     let label: String
     var tint: Color = .primary
+    var trend: [TrendBuffer.Bucket] = []
+    /// See `Sparkline.zeroBased` — true for counts, false for memory.
+    var zeroBased = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -121,6 +150,13 @@ struct Stat: View {
                 .font(.system(size: 9, weight: .semibold))
                 .tracking(0.8)
                 .foregroundStyle(Theme.faint)
+            // Three buckets is the floor for a line that means anything; below
+            // that the space stays empty rather than showing a misleading dot.
+            if trend.count >= 3 {
+                Sparkline(buckets: trend, zeroBased: zeroBased)
+                    .frame(width: 60, height: 13)
+                    .padding(.top, 3)
+            }
         }
         .fixedSize()
     }

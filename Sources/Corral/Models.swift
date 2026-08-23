@@ -209,9 +209,16 @@ struct Activity {
 
     /// How long this has been doing nothing, from the longest-horizon evidence
     /// available. nil when we do not yet know — never a guess.
-    var idleFor: TimeInterval? {
+    var idleFor: TimeInterval? { idleFor(asOf: Date()) }
+
+    /// The same, against a given instant.
+    ///
+    /// The reference date is a parameter rather than a `Date()` call inside,
+    /// because a property that reads the clock cannot be tested: the cases that
+    /// matter here are an agent abandoned two days ago and one quiet for
+    /// fifty-nine minutes, and neither can be produced on demand.
+    func idleFor(asOf now: Date) -> TimeInterval? {
         guard isIdle else { return nil }
-        let now = Date()
         if let terminal = lastTerminalActivity {
             return now.timeIntervalSince(terminal)
         }
@@ -222,6 +229,91 @@ struct Activity {
     /// long Corral has happened to be open.
     var idleIsMeasuredFromTerminal: Bool {
         isIdle && lastTerminalActivity != nil
+    }
+}
+
+/// What an agent group is doing, in the terms someone deciding whether to kill
+/// it actually thinks in.
+///
+/// The distinction that matters is not "is this process on the CPU right now" —
+/// an agent is parked on a read almost all the time, including in the middle of
+/// a task. It is "has anything happened lately, anywhere in this group".
+enum AgentState: String {
+    /// Fewer than two samples so far. Says so rather than guessing.
+    case starting
+    /// Using the CPU, or writing to its terminal right now.
+    case working
+    /// The agent itself is parked, but something it started is busy — a build,
+    /// a test run, an MCP server. Waiting on your own tool is not idleness.
+    case waiting
+    /// Quiet for under an hour. Normal between prompts.
+    case idle
+    /// Quiet for an hour to a day.
+    case stale
+    /// Quiet for over a day.
+    case abandoned
+
+    var label: String {
+        switch self {
+        case .starting: return "new"
+        case .working: return "working"
+        case .waiting: return "waiting"
+        case .idle: return "idle"
+        case .stale: return "idle"
+        case .abandoned: return "abandoned"
+        }
+    }
+
+    /// True for the states where the agent is getting something done, and so
+    /// must never be swept up by a bulk stop.
+    var isBusy: Bool { self == .working || self == .waiting }
+}
+
+/// The whole group's activity, which is the only honest unit: an agent waiting
+/// on a `swift build` it started is working, even though its own process has
+/// used no CPU for two minutes.
+struct GroupActivity {
+    /// How long output must have been absent before recent output stops
+    /// counting as "working".
+    ///
+    /// CLI agents animate a spinner while they wait on the model, which touches
+    /// the terminal every few hundred milliseconds — so this window covers a
+    /// long think without needing to see the network, which we cannot do.
+    static let recentOutputWindow: TimeInterval = 30
+
+    /// A child must be using at least this much of one core to count as work.
+    /// Set above a sleeping MCP server's heartbeat and well below a compile.
+    static let childBusyThreshold = 0.01
+
+    let root: Activity
+    /// The hardest-working thing the agent started, when anything is.
+    let busiestChild: (role: ProcessRole, load: Double)?
+    let state: AgentState
+
+    var idleFor: TimeInterval? { root.idleFor }
+    var idleIsMeasuredFromTerminal: Bool { root.idleIsMeasuredFromTerminal }
+
+    /// Order matters: each rule is stronger evidence than the one below it.
+    ///
+    /// `root.idleFor` being nil is the "we have not watched long enough" case,
+    /// not an active one — a process seen for the first time reports
+    /// `.starting` rather than borrowing the colour of a working agent.
+    static func classify(
+        root: Activity,
+        idleThreshold: Double,
+        busiestChild: (role: ProcessRole, load: Double)?,
+        now: Date = Date()
+    ) -> AgentState {
+        if root.cpuLoad >= idleThreshold { return .working }
+        if let wrote = root.lastTerminalActivity,
+           now.timeIntervalSince(wrote) < recentOutputWindow {
+            return .working
+        }
+        if let child = busiestChild, child.load >= childBusyThreshold { return .waiting }
+        guard let idle = root.idleFor(asOf: now) else { return .starting }
+        if idle < 3_600 { return .idle }
+        if idle < 86_400 { return .stale }
+        return .abandoned
     }
 }
 

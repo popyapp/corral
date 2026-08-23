@@ -104,12 +104,40 @@ private struct HeaderView: View {
 
             Divider().frame(height: 26).opacity(0.4)
 
-            Stat(value: "\(model.totals.agents)", label: "agents")
-            Stat(value: model.totals.residentBytes.byteString, label: "memory")
-            Stat(value: "\(model.totals.projects)", label: "projects")
-            if model.totals.oldest > 0 {
-                Stat(value: model.totals.oldest.durationString, label: "oldest")
+            // One click anywhere on the numbers changes how far back every
+            // sparkline looks, so the range is discoverable without spending a
+            // control on it.
+            HStack(alignment: .center, spacing: 22) {
+                Stat(
+                    value: "\(model.totals.agents)",
+                    label: "agents",
+                    trend: model.trends.agents.series(model.trendRange),
+                    zeroBased: true
+                )
+                Stat(
+                    value: model.totals.residentBytes.byteString,
+                    label: "memory",
+                    trend: model.trends.memory.series(model.trendRange)
+                )
+                Stat(
+                    value: "\(model.totals.projects)",
+                    label: "projects",
+                    trend: model.trends.projects.series(model.trendRange),
+                    zeroBased: true
+                )
+                Stat(
+                    value: String(format: "%.1f", model.trends.cpu.latest ?? 0),
+                    label: "cores",
+                    trend: model.trends.cpu.series(model.trendRange),
+                    zeroBased: true
+                )
+                if model.totals.oldest > 0 {
+                    Stat(value: model.totals.oldest.durationString, label: "oldest")
+                }
             }
+            .contentShape(Rectangle())
+            .onTapGesture { model.cycleTrendRange() }
+            .help(trendHelp)
 
             Spacer(minLength: 8)
 
@@ -126,7 +154,7 @@ private struct HeaderView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.Severity.stale.color)
-                .help("Stop the \(model.staleGroups.count) agents that have been idle over an hour")
+                .help(reclaimHelp)
             }
 
             Button {
@@ -139,6 +167,26 @@ private struct HeaderView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
+    }
+
+    private var trendHelp: String {
+        "Last \(model.trendRange.label), averaged into 30-second steps. "
+        + "Click to switch between 15m, 1h and 3h. "
+        + "A break in a line is a stretch when Corral was not running."
+    }
+
+    /// The button says how much it frees; the tooltip has to say what it will
+    /// do, to what, and why those and not the others.
+    private var reclaimHelp: String {
+        let count = model.staleGroups.count
+        let names = model.staleGroups.prefix(4).map { model.label(for: $0) }
+        let listed = names.joined(separator: ", ")
+        let more = count > names.count ? " and \(count - names.count) more" : ""
+        return """
+        Quit \(count) agent\(count == 1 ? "" : "s") that have written nothing         to their terminal for over an hour, freeing \(model.reclaimableBytes.byteString):         \(listed)\(more).
+
+        Each is asked to exit cleanly, together with the child processes it         started — dev servers, MCP servers, the caffeinate that has been keeping         this Mac awake. Agents that are working, and any waiting on a build they         started, are never included.
+        """
     }
 }
 
@@ -180,6 +228,7 @@ private struct FilterBar: View {
                 chip(title: tool.displayName, count: model.count(of: tool), tool: tool)
             }
             Spacer(minLength: 10)
+            StateLegendButton()
             SearchField(text: $model.query, placeholder: "Project, tool, pid…")
         }
         .padding(.horizontal, 18)
@@ -216,6 +265,94 @@ private struct FilterBar: View {
     }
 }
 
+/// What the coloured dot means, in the app rather than in a README nobody has
+/// open. Five states that look similar at a glance need somewhere to be
+/// explained, and the honest limits of the detection belong in the same place.
+private struct StateLegendButton: View {
+    @State private var showing = false
+
+    var body: some View {
+        Button {
+            showing.toggle()
+        } label: {
+            Image(systemName: "questionmark.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.faint)
+        }
+        .buttonStyle(.plain)
+        .help("What the status colours mean")
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            StateLegend()
+        }
+    }
+}
+
+private struct StateLegend: View {
+    private static let rows: [(AgentState, String)] = [
+        (.working, "Using the CPU, or writing to its terminal right now."),
+        (.waiting, "Parked, but a build, test run or MCP server it started is busy. Waiting on its own work."),
+        (.idle, "Nothing for under an hour. Normal between prompts."),
+        (.stale, "Nothing for an hour to a day. Worth a look."),
+        (.abandoned, "Nothing for over a day. Almost certainly forgotten."),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Text("Agent status")
+                .font(.system(size: 12, weight: .semibold))
+
+            VStack(alignment: .leading, spacing: 9) {
+                ForEach(Self.rows, id: \.0) { state, description in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle()
+                            .fill(Theme.color(for: state))
+                            .frame(width: 7, height: 7)
+                            .padding(.top, 4)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(state.label)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Theme.color(for: state))
+                            Text(description)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(Theme.subtle)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+
+            Divider().opacity(0.5)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("How it is measured")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(Theme.faint)
+                Text(
+                    "Corral watches two things: CPU use, and the last write to the "
+                    + "agent's terminal. It cannot see the network, so an agent "
+                    + "waiting on a reply from the model is doing neither. CLI agents "
+                    + "animate a thinking indicator while they wait, which counts as "
+                    + "output — so that gap usually stays green."
+                )
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.subtle)
+                .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    "An agent with no controlling terminal has only CPU to go on, and "
+                    + "its idle time can only reach back to when Corral opened. Those "
+                    + "rows say so when you hover them, and are never bulk-stopped."
+                )
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.subtle)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(width: 330)
+    }
+}
+
 // ─ List ─────────────────────────────────────────────────────────────────────
 
 private struct AgentList: View {
@@ -240,8 +377,11 @@ private struct AgentRow: View {
     @State private var hovering = false
     @State private var confirmingStop = false
 
-    private var activity: Activity { model.activity(for: group.root.pid) }
-    private var severity: Theme.Severity { .of(activity) }
+    /// Always the group's activity, never the root process alone — see
+    /// `GroupActivity`.
+    private var activity: GroupActivity { model.groupActivity(for: group) }
+    private var state: AgentState { activity.state }
+    private var stateColor: Color { Theme.color(for: state) }
     private var accent: Color { Theme.accent(for: group.root.tool) }
     private var isExpanded: Bool { model.expanded.contains(group.root.pid) }
 
@@ -273,7 +413,6 @@ private struct AgentRow: View {
                 .padding(.leading, 1)
         }
         .onHover { hovering = $0 }
-        .onTapGesture { model.selection = group.root.pid }
         .confirmationDialog(
             "Stop \(model.label(for: group))?",
             isPresented: $confirmingStop,
@@ -307,10 +446,12 @@ private struct AgentRow: View {
 
     private var summary: some View {
         HStack(spacing: 12) {
-            Image(systemName: group.root.tool.symbol)
-                .font(.system(size: 14))
-                .foregroundStyle(accent)
-                .frame(width: 22)
+            ToolGlyph(
+                tool: group.root.tool,
+                executablePaths: group.all.compactMap(\.executablePath),
+                size: 18
+            )
+            .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 7) {
@@ -338,33 +479,50 @@ private struct AgentRow: View {
 
             metric(group.totalResidentBytes.byteString, "memory")
             metric(group.root.uptime.durationString, "up")
-            idleBadge
+            stateBadge
 
-            Button {
-                model.toggleExpanded(group.root.pid)
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .foregroundStyle(Theme.faint)
-                    .frame(width: 18, height: 18)
-            }
-            .buttonStyle(.plain)
-            .help(isExpanded ? "Hide details" : "Show child processes and paths")
+            // A disclosure *indicator*, not a button. It used to be the only
+            // way to open the details, which put an 18-point target next to
+            // Stop — the one control in the row you must never hit by mistake.
+            // The whole bar opens the details now, so this only has to say
+            // that it can be opened.
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                .foregroundStyle(Theme.faint.opacity(hovering ? 1 : 0.6))
+                .frame(width: 14)
+                .animation(.easeInOut(duration: 0.15), value: isExpanded)
 
             Button {
                 confirmingStop = true
             } label: {
                 Image(systemName: "stop.circle")
-                    .font(.system(size: 13))
+                    .font(.system(size: 14))
                     .foregroundStyle(hovering ? Theme.Severity.abandoned.color : Theme.faint)
+                    // A comfortable target, and its own shape so the padding
+                    // is clickable rather than just decorative.
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Stop this agent and its children")
+            .help(stopHelp)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
+        .onTapGesture {
+            model.selection = group.root.pid
+            model.toggleExpanded(group.root.pid)
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint(isExpanded ? "Hide details" : "Show child processes and paths")
+    }
+
+    private var stopHelp: String {
+        let count = group.children.count
+        guard count > 0 else { return "Stop this agent" }
+        return "Stop this agent and the \(count) process\(count == 1 ? "" : "es") "
+            + "it started"
     }
 
     private func metric(_ value: String, _ label: String) -> some View {
@@ -380,43 +538,87 @@ private struct AgentRow: View {
         .frame(minWidth: 52, alignment: .trailing)
     }
 
-    private var idleBadge: some View {
+    private var stateBadge: some View {
         VStack(alignment: .trailing, spacing: 1) {
             HStack(spacing: 4) {
-                Circle().fill(severity.color).frame(width: 6, height: 6)
-                Text(idleValue)
+                Circle().fill(stateColor).frame(width: 6, height: 6)
+                Text(badgeValue)
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(severity.color)
+                    .foregroundStyle(stateColor)
             }
-            Text(idleLabel)
+            Text(badgeLabel)
                 .font(.system(size: 8, weight: .semibold))
                 .tracking(0.6)
                 .foregroundStyle(Theme.faint)
         }
-        .frame(minWidth: 62, alignment: .trailing)
-        .help(idleHelp)
+        .frame(minWidth: 66, alignment: .trailing)
+        .help(stateHelp)
     }
 
-    private var idleValue: String {
-        guard let idle = activity.idleFor else {
-            return String(format: "%.0f%%", activity.cpuLoad * 100)
+    private var badgeValue: String {
+        switch state {
+        case .starting:
+            return "—"
+        case .working:
+            // A percentage only when there is one worth printing; an agent
+            // streaming a reply spends almost no CPU doing it, and "0%" next
+            // to "working" reads as a contradiction.
+            return activity.root.cpuLoad >= AgentInventory.idleThreshold
+                ? String(format: "%.0f%%", activity.root.cpuLoad * 100)
+                : "now"
+        case .waiting:
+            return String(format: "%.0f%%", (activity.busiestChild?.load ?? 0) * 100)
+        case .idle, .stale, .abandoned:
+            return activity.idleFor?.durationString ?? "—"
         }
-        return idle.durationString
     }
 
-    private var idleLabel: String {
-        activity.idleFor == nil ? "cpu" : severity.label
-    }
-
-    /// Being explicit about provenance matters: an idle time measured from the
-    /// terminal is real history, one measured from our own uptime is not.
-    private var idleHelp: String {
-        guard activity.idleFor != nil else { return "Currently using CPU" }
-        if activity.idleIsMeasuredFromTerminal {
-            return "No output to \(group.root.tty ?? "its terminal") for this long"
+    /// For a waiting group the label names *what* it is waiting on, which is
+    /// the useful half: "dev server" and "tooling" call for different reactions.
+    private var badgeLabel: String {
+        switch state {
+        case .working:
+            return activity.root.cpuLoad >= AgentInventory.idleThreshold ? "cpu" : "working"
+        case .waiting:
+            return activity.busiestChild?.role.label ?? "waiting"
+        default:
+            return state.label
         }
-        return "Quiet since Corral started watching — it may have been idle far longer"
+    }
+
+    /// The whole explanation, in the place someone will look for it. Provenance
+    /// is part of it: an idle time measured from the terminal is real history,
+    /// one measured from Corral's own uptime is not.
+    private var stateHelp: String {
+        switch state {
+        case .starting:
+            return "Just appeared — Corral needs a second sample before it can "
+                + "say whether this is working or parked."
+        case .working:
+            if activity.root.cpuLoad >= AgentInventory.idleThreshold {
+                return "Using \(String(format: "%.0f%%", activity.root.cpuLoad * 100)) "
+                    + "of one core right now."
+            }
+            return "Writing to \(group.root.tty ?? "its terminal") right now — "
+                + "streaming a reply, or animating its thinking indicator."
+        case .waiting:
+            let role = activity.busiestChild?.role.label ?? "a child process"
+            return "The agent itself is parked, but the \(role) it started is "
+                + "using the CPU. It is waiting on its own work, not idle."
+        case .idle, .stale, .abandoned:
+            let where_ = group.root.tty ?? "its terminal"
+            let provenance = activity.idleIsMeasuredFromTerminal
+                ? "No output to \(where_) for this long — measured from the "
+                    + "terminal, so it counts time before Corral was open."
+                : "Quiet since Corral started watching. It may have been idle "
+                    + "far longer; with no controlling terminal there is no "
+                    + "earlier evidence to read."
+            let advice = state == .abandoned
+                ? " Over a day — almost certainly forgotten."
+                : (state == .stale ? " Worth a look." : "")
+            return provenance + advice
+        }
     }
 }
 

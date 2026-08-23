@@ -115,8 +115,6 @@ final class AgentInventory {
                 _ = enrich(descendant)
             }
         }
-        let raws = Array(byPid.values)
-
         let liveProcesses = Set(lights.map(\.pid))
         identityCache = identityCache.filter { liveProcesses.contains($0.key) }
 
@@ -302,6 +300,28 @@ final class AgentInventory {
         activity[pid] ?? Activity(cpuLoad: 0, quietSince: nil, lastTerminalActivity: nil)
     }
 
+    /// The group's activity, which is what the UI should ask for.
+    ///
+    /// Reading the root process alone is what makes a working agent look idle:
+    /// while `swift build` or a test run is burning a core, the agent that
+    /// started it is parked on a read and has written nothing. The child is the
+    /// evidence.
+    func groupActivity(for group: AgentGroup) -> GroupActivity {
+        let root = activity(for: group.root.pid)
+        let busiest = group.children
+            .map { (role: $0.role, load: activity(for: $0.pid).cpuLoad) }
+            .max { $0.load < $1.load }
+        return GroupActivity(
+            root: root,
+            busiestChild: busiest,
+            state: GroupActivity.classify(
+                root: root,
+                idleThreshold: Self.idleThreshold,
+                busiestChild: busiest
+            )
+        )
+    }
+
     // ─ Totals ───────────────────────────────────────────────────────────────
 
     struct Totals {
@@ -321,7 +341,10 @@ final class AgentInventory {
             processes: all.count,
             residentBytes: all.reduce(0) { $0 + $1.residentBytes },
             projects: projects.count,
-            idleAgents: groups.filter { activity(for: $0.root.pid).isIdle }.count,
+            // The window, the menu bar and the CLI all read this, so it has
+            // to mean what the window's dots mean: a group waiting on a build
+            // it started is not idle.
+            idleAgents: groups.filter { !groupActivity(for: $0).state.isBusy }.count,
             oldest: groups.map(\.root.uptime).max() ?? 0
         )
     }

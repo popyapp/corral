@@ -15,6 +15,9 @@ final class CorralViewModel: ObservableObject {
     @Published var toolFilter: Tool?
     @Published var query: String = ""
     @Published private(set) var lastRefresh: Date?
+    @Published private(set) var trends = Trends()
+    /// How far back the header sparklines look. Clicking one cycles it.
+    @Published var trendRange: TrendRange = .hour
     @Published var banner: Banner?
 
     struct Banner: Identifiable, Equatable {
@@ -51,12 +54,37 @@ final class CorralViewModel: ObservableObject {
         totals = inventory.totals
         runningVersions = Set(groups.compactMap { $0.root.version })
         lastRefresh = inventory.lastRefresh
+        recordTrends()
         if let selection, !groups.contains(where: { $0.root.pid == selection }) {
             self.selection = nil
         }
     }
 
+    /// One sample per refresh into each header series.
+    ///
+    /// CPU is summed across every process in every group, so the number is
+    /// "cores these agents are using", not a share of the machine — two agents
+    /// compiling flat out read as 2.0, which is the honest figure and the one
+    /// that explains a hot fan.
+    private func recordTrends() {
+        let now = Date()
+        let load = groups.flatMap(\.all).reduce(0.0) { $0 + activity(for: $1.pid).cpuLoad }
+        trends.cpu.record(load, at: now)
+        trends.memory.record(Double(totals.residentBytes), at: now)
+        trends.agents.record(Double(totals.agents), at: now)
+        trends.projects.record(Double(totals.projects), at: now)
+    }
+
+    func cycleTrendRange() { trendRange = trendRange.next }
+
     func activity(for pid: pid_t) -> Activity { inventory.activity(for: pid) }
+
+    /// What a row should show. Always prefer this over `activity(for:)`: the
+    /// root process alone cannot tell a parked agent from one waiting on the
+    /// build it started.
+    func groupActivity(for group: AgentGroup) -> GroupActivity {
+        inventory.groupActivity(for: group)
+    }
 
     var visibleGroups: [AgentGroup] {
         var result = groups
@@ -112,11 +140,16 @@ final class CorralViewModel: ObservableObject {
     }
 
     /// Agents idle for longer than the threshold — the ones worth reclaiming.
+    ///
+    /// A group whose child is mid-compile is excluded even when the agent's own
+    /// terminal has been silent for hours: a long build produces no output, and
+    /// bulk-stopping it would throw away the work it is waiting for.
     var staleGroups: [AgentGroup] {
         groups.filter { group in
-            guard let idle = activity(for: group.root.pid).idleFor else { return false }
-            return activity(for: group.root.pid).idleIsMeasuredFromTerminal
-                && idle >= Self.staleThreshold
+            let activity = groupActivity(for: group)
+            guard !activity.state.isBusy else { return false }
+            guard let idle = activity.idleFor else { return false }
+            return activity.idleIsMeasuredFromTerminal && idle >= Self.staleThreshold
         }
     }
 

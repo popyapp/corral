@@ -155,10 +155,27 @@ enum CLI {
 
         for group in groups {
             let root = group.root
-            let act = inventory.activity(for: root.pid)
+            let group_ = inventory.groupActivity(for: group)
+            let act = group_.root
 
             let state: String
-            if let idle = act.idleFor {
+            switch group_.state {
+            case .starting:
+                state = "just appeared"
+            case .working:
+                state = act.cpuLoad >= AgentInventory.idleThreshold
+                    ? String(format: "%.0f%% cpu", act.cpuLoad * 100)
+                    : "working (writing output)"
+            case .waiting:
+                // Naming the child is the whole value here: "waiting on
+                // tooling" tells you to leave it alone, and why.
+                let role = group_.busiestChild?.role.label ?? "a child process"
+                state = String(
+                    format: "waiting on %@ (%.0f%% cpu)",
+                    role, (group_.busiestChild?.load ?? 0) * 100
+                )
+            case .idle, .stale, .abandoned:
+                let idle = group_.idleFor ?? 0
                 // Say where the number came from. "idle 3d" measured from the
                 // terminal is a fact; measured from our own uptime it is only
                 // "quiet since we started looking", and conflating the two
@@ -166,8 +183,6 @@ enum CLI {
                 state = act.idleIsMeasuredFromTerminal
                     ? "idle \(idle.durationString)"
                     : "quiet \(idle.durationString) (since Corral opened)"
-            } else {
-                state = String(format: "%.0f%% cpu", act.cpuLoad * 100)
             }
 
             print("  \(root.title)  ·  pid \(root.pid)")
@@ -213,7 +228,8 @@ enum CLI {
 
     static func describe(_ group: AgentGroup, inventory: AgentInventory) -> [String: Any] {
         let root = group.root
-        let act = inventory.activity(for: root.pid)
+        let group_ = inventory.groupActivity(for: group)
+        let act = group_.root
         var dict: [String: Any] = [
             "pid": root.pid,
             "ppid": root.ppid,
@@ -224,7 +240,8 @@ enum CLI {
             "resident_bytes": root.residentBytes,
             "group_resident_bytes": group.totalResidentBytes,
             "cpu_load": act.cpuLoad,
-            "idle": act.isIdle,
+            "idle": !group_.state.isBusy,
+            "state": group_.state.rawValue,
             "children": group.children.map {
                 [
                     "pid": $0.pid,
@@ -238,7 +255,10 @@ enum CLI {
         if let cwd = root.workingDirectory { dict["working_directory"] = cwd }
         if let project = root.projectName { dict["project"] = project }
         if let path = root.executablePath { dict["executable"] = path }
-        if let idle = act.idleFor { dict["idle_seconds"] = Int(idle) }
+        if let idle = group_.idleFor { dict["idle_seconds"] = Int(idle) }
+        if let child = group_.busiestChild, child.load >= GroupActivity.childBusyThreshold {
+            dict["waiting_on"] = ["role": child.role.rawValue, "cpu_load": child.load]
+        }
         return dict
     }
 }
