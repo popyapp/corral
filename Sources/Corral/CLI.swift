@@ -255,6 +255,9 @@ enum CLI {
         if let cwd = root.workingDirectory { dict["working_directory"] = cwd }
         if let project = root.projectName { dict["project"] = project }
         if let path = root.executablePath { dict["executable"] = path }
+        // The window badges terminal agents with a $; a script reading this
+        // should be able to tell the same ones apart.
+        if let tty = root.tty { dict["tty"] = tty }
         if let idle = group_.idleFor { dict["idle_seconds"] = Int(idle) }
         if let child = group_.busiestChild, child.load >= GroupActivity.childBusyThreshold {
             dict["waiting_on"] = ["role": child.role.rawValue, "cpu_load": child.load]
