@@ -149,6 +149,13 @@ enum TrendMetric: String, CaseIterable, Identifiable {
 /// 15-minute one draw the same number of bars at the same width, instead of
 /// the longer range collapsing into a solid block.
 struct TrendGraph: View {
+    /// One column, read off under the pointer.
+    struct Probe: Equatable {
+        let value: Double
+        /// The start of the 30-second bucket this column covers.
+        let at: Date
+    }
+
     let buckets: [TrendBuffer.Bucket]
     var color: Color = Theme.trend
     /// Forces the y-axis to start at zero. Right for counts, where a floor of
@@ -156,23 +163,45 @@ struct TrendGraph: View {
     /// megabytes and a zero floor would flatten every real change into nothing.
     var zeroBased = false
     var maxColumns = 22
+    /// Fires as the pointer moves across the columns, and once with nil when it
+    /// leaves.
+    var onProbe: ((Probe?) -> Void)?
+
+    @State private var hovered: Int?
 
     var body: some View {
-        Canvas(opaque: false, rendersAsynchronously: false) { context, size in
+        GeometryReader { geometry in
             let columns = resample()
-            guard columns.contains(where: { $0 != nil }) else { return }
-
-            draw(grid: context, size: size)
-            draw(columns: columns, context: context, size: size)
+            Canvas(opaque: false, rendersAsynchronously: false) { context, size in
+                guard columns.contains(where: { $0 != nil }) else { return }
+                draw(grid: context, size: size)
+                draw(columns: columns, context: context, size: size)
+            }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
+                    probe(at: location, width: geometry.size.width, columns: columns)
+                case .ended:
+                    if hovered != nil { hovered = nil }
+                    onProbe?(nil)
+                }
+            }
         }
     }
 
     // ─ Data ─────────────────────────────────────────────────────────────────
 
+    private struct Column {
+        let value: Double
+        /// The bucket this column stands for, so a reading can be dated.
+        let index: Int
+    }
+
     /// One slot per column, nil where no bucket landed — a stretch when Corral
     /// was not running leaves a hole rather than a bar borrowed from its
     /// neighbours.
-    private func resample() -> [Double?] {
+    private func resample() -> [Column?] {
         guard let first = buckets.first, let last = buckets.last else { return [] }
         let span = last.index - first.index
         // Never more columns than there are buckets to fill them: early on,
@@ -181,6 +210,7 @@ struct TrendGraph: View {
 
         var sums = [Double](repeating: 0, count: count)
         var hits = [Int](repeating: 0, count: count)
+        var latest = [Int](repeating: 0, count: count)
         for bucket in buckets {
             let position = span == 0
                 ? 0
@@ -188,8 +218,29 @@ struct TrendGraph: View {
             let slot = min(max(position, 0), count - 1)
             sums[slot] += bucket.value
             hits[slot] += 1
+            latest[slot] = max(latest[slot], bucket.index)
         }
-        return (0..<count).map { hits[$0] == 0 ? nil : sums[$0] / Double(hits[$0]) }
+        return (0..<count).map { slot in
+            hits[slot] == 0
+                ? nil
+                : Column(value: sums[slot] / Double(hits[slot]), index: latest[slot])
+        }
+    }
+
+    private func probe(at location: CGPoint, width: CGFloat, columns: [Column?]) {
+        guard width > 0, !columns.isEmpty else { return }
+        let slot = width / CGFloat(columns.count)
+        let index = min(max(Int(location.x / slot), 0), columns.count - 1)
+        if hovered != index { hovered = index }
+        guard let column = columns[index] else {
+            // A hole: there is genuinely nothing to report for that moment.
+            onProbe?(nil)
+            return
+        }
+        onProbe?(Probe(
+            value: column.value,
+            at: Date(timeIntervalSince1970: Double(column.index) * TrendBuffer.bucketSeconds)
+        ))
     }
 
     // ─ Drawing ──────────────────────────────────────────────────────────────
@@ -212,8 +263,8 @@ struct TrendGraph: View {
         context.stroke(baseline, with: .color(ink), lineWidth: 0.5)
     }
 
-    private func draw(columns: [Double?], context: GraphicsContext, size: CGSize) {
-        let values = columns.compactMap { $0 }
+    private func draw(columns: [Column?], context: GraphicsContext, size: CGSize) {
+        let values = columns.compactMap { $0?.value }
         let top = values.max() ?? 0
         let bottom = zeroBased ? 0 : (values.min() ?? 0)
         let range = top - bottom
@@ -224,25 +275,30 @@ struct TrendGraph: View {
         // The baseline owns the bottom half-pixel; bars sit on it.
         let plotHeight = size.height - 1
 
-        for (index, value) in columns.enumerated() {
-            guard let value else { continue }
-            let normalized = flat ? 0.5 : (value - bottom) / range
+        for (index, column) in columns.enumerated() {
+            let x = CGFloat(index) * slot
+
+            // The crosshair is drawn even over a hole, so the pointer never
+            // seems to fall off the graph.
+            if index == hovered {
+                context.fill(
+                    Path(CGRect(x: x, y: 0, width: barWidth, height: size.height)),
+                    with: .color(Color.primary.opacity(0.08))
+                )
+            }
+
+            guard let column else { continue }
+            let normalized = flat ? 0.5 : (column.value - bottom) / range
             // A minimum of one pixel: a genuine zero still leaves a tick, so an
             // empty column and a zero column do not look the same.
             let height = max(1, CGFloat(normalized) * plotHeight)
-            let rect = CGRect(
-                x: CGFloat(index) * slot,
-                y: plotHeight - height,
-                width: barWidth,
-                height: height
-            )
+            let rect = CGRect(x: x, y: plotHeight - height, width: barWidth, height: height)
+
             // The newest column is the live one, so it carries full weight and
-            // the history behind it recedes.
-            let isLatest = index == columns.count - 1
-            context.fill(
-                Path(rect),
-                with: .color(color.opacity(isLatest ? 1.0 : 0.55))
-            )
+            // the history behind it recedes; whatever is under the pointer is
+            // brought forward too.
+            let emphasised = index == columns.count - 1 || index == hovered
+            context.fill(Path(rect), with: .color(color.opacity(emphasised ? 1.0 : 0.55)))
         }
     }
 }

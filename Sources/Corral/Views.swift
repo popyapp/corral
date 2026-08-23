@@ -172,11 +172,13 @@ private struct HeaderView: View {
         let names = model.staleGroups.prefix(4).map { model.label(for: $0) }
         let listed = names.joined(separator: ", ")
         let more = count > names.count ? " and \(count - names.count) more" : ""
-        return """
-        Quit \(count) agent\(count == 1 ? "" : "s") that have written nothing         to their terminal for over an hour, freeing \(model.reclaimableBytes.byteString):         \(listed)\(more).
-
-        Each is asked to exit cleanly, together with the child processes it         started — dev servers, MCP servers, the caffeinate that has been keeping         this Mac awake. Agents that are working, and any waiting on a build they         started, are never included.
-        """
+        return "Quit \(count) agent\(count == 1 ? "" : "s") that have written "
+            + "nothing to their terminal for over an hour, freeing "
+            + "\(model.reclaimableBytes.byteString): \(listed)\(more).\n\n"
+            + "Each is asked to exit cleanly, together with the child processes "
+            + "it started — dev servers, MCP servers, the caffeinate that has "
+            + "been keeping this Mac awake. Agents that are working, and any "
+            + "waiting on a build they started, are never included."
     }
 }
 
@@ -188,6 +190,8 @@ private struct HeaderView: View {
 /// graph itself changes how far back it looks.
 private struct HeaderGraph: View {
     @EnvironmentObject private var model: CorralViewModel
+    /// The column under the pointer, when there is one.
+    @State private var probe: TrendGraph.Probe?
 
     var body: some View {
         let metric = model.trendMetric
@@ -204,14 +208,24 @@ private struct HeaderGraph: View {
                     .tracking(0.5)
                     .foregroundStyle(Theme.faint)
                 Spacer(minLength: 4)
-                Text(reading(metric))
+                // The graph has no axis, so this number is what gives the bars
+                // a scale. Under the pointer it becomes the reading for that
+                // column instead — docked rather than floating, because a chip
+                // following the cursor would cover the twenty points of plot it
+                // is trying to explain, and because it appears instantly rather
+                // than after a tooltip's delay.
+                Text(probeReading(metric) ?? reading(metric))
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Theme.subtle)
+                    .foregroundStyle(probe == nil ? Theme.subtle : Theme.trend)
             }
 
             if series.count >= 3 {
-                TrendGraph(buckets: series, zeroBased: metric.zeroBased)
-                    .frame(maxWidth: .infinity)
+                TrendGraph(
+                    buckets: series,
+                    zeroBased: metric.zeroBased,
+                    onProbe: { probe = $0 }
+                )
+                .frame(maxWidth: .infinity)
             } else {
                 // Two samples is a segment, not a trend. Saying it is still
                 // filling is better than drawing a shape that means nothing.
@@ -239,20 +253,35 @@ private struct HeaderGraph: View {
         .pointerCursor()
         .help(
             "\(metric.label) over the last \(model.trendRange.label), in "
-            + "30-second steps. Click to switch between 15m, 1h and 3h; click a "
-            + "figure on the left to plot it instead. A missing column is a "
-            + "stretch when Corral was not running."
+            + "30-second steps. Point at a column to read its value and when it "
+            + "was. Click to switch between 15m, 1h and 3h; click a figure on "
+            + "the left to plot it instead. A missing column is a stretch when "
+            + "Corral was not running."
         )
     }
 
-    /// The current value, in the metric's own units — the graph has no axis, so
-    /// the number beside it is what gives the bars a scale.
+    /// The live value, in the metric's own units.
     private func reading(_ metric: TrendMetric) -> String {
-        let latest = model.trends.series(for: metric).latest ?? 0
+        format(model.trends.series(for: metric).latest ?? 0, metric)
+    }
+
+    /// What the hovered column held, and when.
+    private func probeReading(_ metric: TrendMetric) -> String? {
+        guard let probe else { return nil }
+        let age = Date().timeIntervalSince(probe.at)
+        // Buckets are 30 seconds wide, so anything inside one is "now" rather
+        // than a spuriously precise "8s ago".
+        let when = age < TrendBuffer.bucketSeconds
+            ? "now"
+            : "\(age.durationString) ago"
+        return "\(format(probe.value, metric)) · \(when)"
+    }
+
+    private func format(_ value: Double, _ metric: TrendMetric) -> String {
         switch metric {
-        case .cpu: return String(format: "%.2f cores", latest)
-        case .memory: return UInt64(max(0, latest)).byteString
-        case .agents, .projects: return String(format: "%.0f", latest)
+        case .cpu: return String(format: "%.2f cores", value)
+        case .memory: return UInt64(max(0, value)).byteString
+        case .agents, .projects: return String(format: "%.0f", value)
         }
     }
 }
