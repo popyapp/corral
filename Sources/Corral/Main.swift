@@ -45,6 +45,7 @@ enum Entry {
 
 struct CorralApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @ObservedObject private var appearance = AppearanceController.shared
 
     var body: some Scene {
         WindowGroup("Corral") {
@@ -60,6 +61,12 @@ struct CorralApp: App {
             // items would be worse than one incomplete one.
             CommandGroup(replacing: .appInfo) {
                 Button("About Corral") { AboutPanel.show() }
+                Divider()
+                Picker("Appearance", selection: $appearance.mode) {
+                    ForEach(AppearanceMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
             }
         }
     }
@@ -85,6 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         MainActor.assumeIsolated {
+            // Before the first window is drawn, so a dark-mode launch never
+            // flashes light.
+            AppearanceController.shared.apply()
             statusItem = StatusItemController(model: AppState.shared.agents)
         }
     }

@@ -171,6 +171,22 @@ final class StatusItemController {
         open.target = MenuBuilder.shared
         menu.addItem(open)
 
+        let appearance = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
+        let appearanceMenu = NSMenu()
+        for mode in AppearanceMode.allCases {
+            let entry = NSMenuItem(
+                title: mode.label,
+                action: #selector(MenuBuilder.setAppearance(_:)),
+                keyEquivalent: ""
+            )
+            entry.target = MenuBuilder.shared
+            entry.representedObject = mode.rawValue
+            entry.state = AppearanceController.shared.mode == mode ? .on : .off
+            appearanceMenu.addItem(entry)
+        }
+        appearance.submenu = appearanceMenu
+        menu.addItem(appearance)
+
         // Corral is usable with its window closed, so "which build am I
         // running" has to be answerable from here too.
         let about = NSMenuItem(
@@ -252,5 +268,11 @@ final class MenuBuilder: NSObject, NSMenuDelegate {
 
     @objc func showAbout() {
         MainActor.assumeIsolated { AboutPanel.show() }
+    }
+
+    @objc func setAppearance(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = AppearanceMode(rawValue: raw) else { return }
+        MainActor.assumeIsolated { AppearanceController.shared.mode = mode }
     }
 }

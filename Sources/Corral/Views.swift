@@ -195,7 +195,8 @@ private struct HeaderGraph: View {
 
     var body: some View {
         let metric = model.trendMetric
-        let series = model.trends.series(for: metric).series(model.trendRange)
+        let columns = model.trends.series(for: metric).columns(model.trendRange)
+        let recorded = columns.compactMap { $0 }.count
 
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
@@ -219,9 +220,10 @@ private struct HeaderGraph: View {
                     .foregroundStyle(probe == nil ? Theme.subtle : Theme.trend)
             }
 
-            if series.count >= 3 {
+            if recorded >= 3 {
                 TrendGraph(
-                    buckets: series,
+                    columns: columns,
+                    range: model.trendRange,
                     zeroBased: metric.zeroBased,
                     onProbe: { probe = $0 }
                 )
@@ -265,15 +267,14 @@ private struct HeaderGraph: View {
         format(model.trends.series(for: metric).latest ?? 0, metric)
     }
 
-    /// What the hovered column held, and when.
+    /// What the hovered column held, and how far back it sits.
     private func probeReading(_ metric: TrendMetric) -> String? {
         guard let probe else { return nil }
-        let age = Date().timeIntervalSince(probe.at)
-        // Buckets are 30 seconds wide, so anything inside one is "now" rather
-        // than a spuriously precise "8s ago".
-        let when = age < TrendBuffer.bucketSeconds
+        // The rightmost column is the live one; calling it "10s ago" would be
+        // precision the grid does not have.
+        let when = probe.age < model.trendRange.sliceSeconds
             ? "now"
-            : "\(age.durationString) ago"
+            : "\(probe.age.durationString) ago"
         return "\(format(probe.value, metric)) · \(when)"
     }
 

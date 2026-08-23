@@ -69,8 +69,17 @@ idle, what it spawned, and what it is costing you.
   default. Click a figure — agents, memory, projects, cores — to plot that one
   instead; click the graph to switch between 15 minutes, 1 hour and 3 hours.
   "2.92 GB" cannot tell you whether that is the calm after you closed six agents
-  or the start of a climb; the graph can. A missing column is a stretch when
-  Corral was not running — it will not draw across a sleep it did not observe.
+  or the start of a climb; the graph can. Point at a column to read what it held
+  and how far back it sits.
+
+  The axis is fixed: now at the right edge, running back the full range in
+  10-second, 30-second or 1-minute slices. Two minutes of history fills two
+  minutes of a three-hour graph and leaves the rest empty, rather than being
+  stretched across it — and a stretch when Corral was not running stays empty
+  too, because it will not draw across a sleep it did not observe.
+- **Light or dark.** Corral follows the system, or you can pin it either way
+  from the app menu or the menu bar item — a window you leave open all day is
+  the kind you might want dark on a light desktop.
 - **Sorting.** By how long it has been running (the default — the thing you
   forgot about is the thing you came here to find), by memory, by CPU across the
   whole group, or by project name. Each order has an obvious direction, so

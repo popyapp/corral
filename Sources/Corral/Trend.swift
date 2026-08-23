@@ -22,6 +22,20 @@ enum TrendRange: String, CaseIterable, Identifiable {
         }
     }
 
+    /// How much time one column covers. Chosen so every range draws a similar
+    /// number of columns — a fixed slice across all three would make the
+    /// 15-minute view six bars wide or the 3-hour view a thousand.
+    var sliceSeconds: TimeInterval {
+        switch self {
+        case .fifteenMinutes: return 10
+        case .hour: return 30
+        case .threeHours: return 60
+        }
+    }
+
+    /// Columns in the grid. Fixed for the range, whatever history exists.
+    var columnCount: Int { Int(seconds / sliceSeconds) }
+
     /// Clicking the header cycles through the ranges rather than spending a
     /// control on something most people set once.
     var next: TrendRange {
@@ -35,16 +49,17 @@ enum TrendRange: String, CaseIterable, Identifiable {
 
 /// Rolling history of one header number.
 ///
-/// Samples arrive every two seconds, but a sparkline 90 points wide cannot show
-/// 5,400 of them, so they are averaged into 30-second buckets and the last three
-/// hours of buckets are kept — the longest range the header offers.
+/// Samples arrive every two seconds and are averaged into 10-second buckets;
+/// three hours of them are kept, the longest range the header offers.
 ///
 /// Buckets are stored with their absolute index rather than as a plain array,
 /// so a gap is a real gap. A Mac that slept for an hour did not hold a steady
 /// value through it, and drawing a flat line across that stretch would be a
 /// claim Corral cannot make.
 struct TrendBuffer {
-    static let bucketSeconds: TimeInterval = 30
+    /// The finest slice any range asks for, so every range can be built by
+    /// aggregating buckets rather than interpolating between them.
+    static let bucketSeconds: TimeInterval = 10
 
     struct Bucket: Equatable {
         let index: Int
@@ -92,6 +107,35 @@ struct TrendBuffer {
     /// True once there is enough history for a line to mean anything. Two
     /// points is a segment; one is a dot that reads as a flat trend.
     func hasShape(_ range: TrendRange) -> Bool { series(range).count >= 3 }
+
+    /// Values on a fixed grid anchored at `now`: one slot per slice of `range`,
+    /// oldest on the left, the live moment at the right edge.
+    ///
+    /// This is the difference between a graph and a picture of one. Spreading
+    /// whatever history exists across the full width made five minutes of data
+    /// fill a three-hour chart, so the axis said one thing and the bars another.
+    /// Here a slot with no samples in it is nil and stays empty, and the graph
+    /// fills in from the right as time passes — which is also what makes the
+    /// three ranges comparable to each other.
+    func columns(_ range: TrendRange, now: Date = Date()) -> [Double?] {
+        let count = range.columnCount
+        var sums = [Double](repeating: 0, count: count)
+        var hits = [Int](repeating: 0, count: count)
+
+        var all = buckets
+        if let openIndex, let live { all.append(Bucket(index: openIndex, value: live)) }
+
+        for bucket in all {
+            let start = Double(bucket.index) * Self.bucketSeconds
+            let age = now.timeIntervalSince1970 - start
+            guard age >= 0 else { continue }
+            let slot = count - 1 - Int(age / range.sliceSeconds)
+            guard slot >= 0, slot < count else { continue }
+            sums[slot] += bucket.value
+            hits[slot] += 1
+        }
+        return (0..<count).map { hits[$0] == 0 ? nil : sums[$0] / Double(hits[$0]) }
+    }
 }
 
 /// The header's trend lines, recorded together so they share a time axis.
@@ -152,17 +196,19 @@ struct TrendGraph: View {
     /// One column, read off under the pointer.
     struct Probe: Equatable {
         let value: Double
-        /// The start of the 30-second bucket this column covers.
-        let at: Date
+        /// How far back the column sits, measured from the graph's right edge.
+        let age: TimeInterval
     }
 
-    let buckets: [TrendBuffer.Bucket]
+    /// One slot per slice of `range`, oldest first; nil where nothing was
+    /// recorded. Built by `TrendBuffer.columns(_:now:)`.
+    let columns: [Double?]
+    let range: TrendRange
     var color: Color = Theme.trend
     /// Forces the y-axis to start at zero. Right for counts, where a floor of
     /// zero is meaningful; wrong for memory, where every agent holds a hundred
     /// megabytes and a zero floor would flatten every real change into nothing.
     var zeroBased = false
-    var maxColumns = 22
     /// Fires as the pointer moves across the columns, and once with nil when it
     /// leaves.
     var onProbe: ((Probe?) -> Void)?
@@ -171,17 +217,16 @@ struct TrendGraph: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let columns = resample()
             Canvas(opaque: false, rendersAsynchronously: false) { context, size in
                 guard columns.contains(where: { $0 != nil }) else { return }
                 draw(grid: context, size: size)
-                draw(columns: columns, context: context, size: size)
+                draw(bars: context, size: size)
             }
             .contentShape(Rectangle())
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let location):
-                    probe(at: location, width: geometry.size.width, columns: columns)
+                    probe(at: location, width: geometry.size.width)
                 case .ended:
                     if hovered != nil { hovered = nil }
                     onProbe?(nil)
@@ -190,56 +235,22 @@ struct TrendGraph: View {
         }
     }
 
-    // ─ Data ─────────────────────────────────────────────────────────────────
+    // ─ Pointer ──────────────────────────────────────────────────────────────
 
-    private struct Column {
-        let value: Double
-        /// The bucket this column stands for, so a reading can be dated.
-        let index: Int
-    }
-
-    /// One slot per column, nil where no bucket landed — a stretch when Corral
-    /// was not running leaves a hole rather than a bar borrowed from its
-    /// neighbours.
-    private func resample() -> [Column?] {
-        guard let first = buckets.first, let last = buckets.last else { return [] }
-        let span = last.index - first.index
-        // Never more columns than there are buckets to fill them: early on,
-        // wide bars are honest, and holes would look like missing data.
-        let count = max(1, min(maxColumns, span + 1))
-
-        var sums = [Double](repeating: 0, count: count)
-        var hits = [Int](repeating: 0, count: count)
-        var latest = [Int](repeating: 0, count: count)
-        for bucket in buckets {
-            let position = span == 0
-                ? 0
-                : Int((Double(bucket.index - first.index) / Double(span)) * Double(count - 1))
-            let slot = min(max(position, 0), count - 1)
-            sums[slot] += bucket.value
-            hits[slot] += 1
-            latest[slot] = max(latest[slot], bucket.index)
-        }
-        return (0..<count).map { slot in
-            hits[slot] == 0
-                ? nil
-                : Column(value: sums[slot] / Double(hits[slot]), index: latest[slot])
-        }
-    }
-
-    private func probe(at location: CGPoint, width: CGFloat, columns: [Column?]) {
+    private func probe(at location: CGPoint, width: CGFloat) {
         guard width > 0, !columns.isEmpty else { return }
         let slot = width / CGFloat(columns.count)
         let index = min(max(Int(location.x / slot), 0), columns.count - 1)
         if hovered != index { hovered = index }
-        guard let column = columns[index] else {
-            // A hole: there is genuinely nothing to report for that moment.
+        guard let value = columns[index] else {
+            // An empty slot: nothing was recorded for that moment, and there is
+            // nothing honest to report for it.
             onProbe?(nil)
             return
         }
         onProbe?(Probe(
-            value: column.value,
-            at: Date(timeIntervalSince1970: Double(column.index) * TrendBuffer.bucketSeconds)
+            value: value,
+            age: Double(columns.count - 1 - index) * range.sliceSeconds
         ))
     }
 
@@ -263,8 +274,8 @@ struct TrendGraph: View {
         context.stroke(baseline, with: .color(ink), lineWidth: 0.5)
     }
 
-    private func draw(columns: [Column?], context: GraphicsContext, size: CGSize) {
-        let values = columns.compactMap { $0?.value }
+    private func draw(bars context: GraphicsContext, size: CGSize) {
+        let values = columns.compactMap { $0 }
         let top = values.max() ?? 0
         let bottom = zeroBased ? 0 : (values.min() ?? 0)
         let range = top - bottom
@@ -275,28 +286,25 @@ struct TrendGraph: View {
         // The baseline owns the bottom half-pixel; bars sit on it.
         let plotHeight = size.height - 1
 
-        for (index, column) in columns.enumerated() {
+        for (index, value) in columns.enumerated() {
             let x = CGFloat(index) * slot
 
-            // The crosshair is drawn even over a hole, so the pointer never
+            // The crosshair is drawn over empty slots too, so the pointer never
             // seems to fall off the graph.
             if index == hovered {
                 context.fill(
-                    Path(CGRect(x: x, y: 0, width: barWidth, height: size.height)),
-                    with: .color(Color.primary.opacity(0.08))
+                    Path(CGRect(x: x, y: 0, width: max(barWidth, 1.5), height: size.height)),
+                    with: .color(Color.primary.opacity(0.10))
                 )
             }
 
-            guard let column else { continue }
-            let normalized = flat ? 0.5 : (column.value - bottom) / range
+            guard let value else { continue }
+            let normalized = flat ? 0.5 : (value - bottom) / range
             // A minimum of one pixel: a genuine zero still leaves a tick, so an
-            // empty column and a zero column do not look the same.
+            // empty slot and a zero one do not look the same.
             let height = max(1, CGFloat(normalized) * plotHeight)
             let rect = CGRect(x: x, y: plotHeight - height, width: barWidth, height: height)
 
-            // The newest column is the live one, so it carries full weight and
-            // the history behind it recedes; whatever is under the pointer is
-            // brought forward too.
             let emphasised = index == columns.count - 1 || index == hovered
             context.fill(Path(rect), with: .color(color.opacity(emphasised ? 1.0 : 0.55)))
         }

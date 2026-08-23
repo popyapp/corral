@@ -157,19 +157,84 @@ final class TrendBufferTests: XCTestCase {
         XCTAssertEqual(buffer.latest, 10)
     }
 
-    /// A gap has to survive as a gap: the sparkline breaks its line there, and
+    /// A gap has to survive as a gap: the graph leaves those slots empty, and
     /// it can only do that if the missing buckets are actually missing.
     func testAGapInSamplingLeavesAGapInTheBuckets() {
+        let bucket = TrendBuffer.bucketSeconds
         var buffer = TrendBuffer()
         buffer.record(1, at: start)
-        buffer.record(2, at: start.addingTimeInterval(30))
+        buffer.record(2, at: start.addingTimeInterval(bucket))
         // The Mac slept for ten minutes.
-        buffer.record(3, at: start.addingTimeInterval(630))
+        buffer.record(3, at: start.addingTimeInterval(600 + bucket))
 
         let indices = buffer.series(.hour).map(\.index)
         XCTAssertEqual(indices.count, 3)
         XCTAssertEqual(indices[1] - indices[0], 1)
-        XCTAssertEqual(indices[2] - indices[1], 20, "ten minutes is twenty buckets")
+        XCTAssertEqual(
+            indices[2] - indices[1],
+            Int(600 / bucket),
+            "ten minutes of silence is ten minutes of missing buckets"
+        )
+    }
+
+    // ─ The fixed grid the graph draws ───────────────────────────────────────
+
+    func testEachRangeHasItsOwnSliceAndColumnCount() {
+        XCTAssertEqual(TrendRange.fifteenMinutes.sliceSeconds, 10)
+        XCTAssertEqual(TrendRange.hour.sliceSeconds, 30)
+        XCTAssertEqual(TrendRange.threeHours.sliceSeconds, 60)
+        XCTAssertEqual(TrendRange.fifteenMinutes.columnCount, 90)
+        XCTAssertEqual(TrendRange.hour.columnCount, 120)
+        XCTAssertEqual(TrendRange.threeHours.columnCount, 180)
+    }
+
+    /// The point of the grid: a graph is a picture of a fixed span of time, not
+    /// of however much history happens to exist. Two minutes of samples fill
+    /// the right-hand edge of a three-hour chart and leave the rest empty.
+    func testShortHistoryFillsOnlyTheRightEdge() {
+        var buffer = TrendBuffer()
+        for step in 0..<12 {   // two minutes at one sample per 10s
+            buffer.record(5, at: start.addingTimeInterval(Double(step) * 10))
+        }
+        let now = start.addingTimeInterval(120)
+        let columns = buffer.columns(.threeHours, now: now)
+
+        XCTAssertEqual(columns.count, 180)
+        let filled = columns.enumerated().filter { $0.element != nil }.map(\.offset)
+        // Two minutes of history touches two or three 60-second slices,
+        // depending on where `now` falls inside one. What matters is that it is
+        // a handful at the right-hand edge and not 180 stretched across.
+        XCTAssertLessThanOrEqual(filled.count, 3)
+        XCTAssertEqual(filled.last, 179, "the newest sample sits at the right edge")
+        XCTAssertEqual(
+            filled, Array(filled.first!...179), "and they are contiguous from there"
+        )
+        XCTAssertNil(columns.first ?? nil, "three hours ago is empty, not stretched")
+    }
+
+    /// A one-hour view slices at 30 seconds, so three 10-second buckets land in
+    /// each slot and are averaged.
+    func testColumnsAverageTheBucketsThatFallInThem() {
+        var buffer = TrendBuffer()
+        buffer.record(1, at: start)
+        buffer.record(3, at: start.addingTimeInterval(10))
+        buffer.record(5, at: start.addingTimeInterval(20))
+        // 25s, not 30s: at exactly one slice the oldest bucket tips into the
+        // previous slot, which is correct but not what this test is about.
+        let columns = buffer.columns(.hour, now: start.addingTimeInterval(25))
+
+        let last = columns.compactMap { $0 }
+        XCTAssertEqual(last.count, 1, "all three buckets fall in one 30s slice")
+        XCTAssertEqual(last[0], 3.0, accuracy: 0.001, "mean of 1, 3 and 5")
+    }
+
+    /// Samples older than the range are outside the picture, not squeezed into
+    /// its left edge.
+    func testSamplesOlderThanTheRangeAreNotShown() {
+        var buffer = TrendBuffer()
+        buffer.record(9, at: start)
+        let columns = buffer.columns(.fifteenMinutes, now: start.addingTimeInterval(1_800))
+        XCTAssertTrue(columns.allSatisfy { $0 == nil }, "half an hour ago is off a 15m graph")
     }
 
     func testOlderThanThreeHoursIsDropped() {
