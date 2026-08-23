@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// One place for colour and type, so the window reads as a designed thing
@@ -160,6 +161,39 @@ struct Stat: View {
     }
 }
 
+
+/// A pointing-hand cursor over something clickable.
+///
+/// macOS 15 has `.pointerStyle(.link)`; this app runs on 13, so the cursor is
+/// pushed and popped by hand. Push and pop must balance — one stray push leaves
+/// the whole app stuck with a hand cursor — so the state is tracked rather than
+/// assumed, and a view that disappears while hovered pops on its way out.
+private struct PointerCursor: ViewModifier {
+    @State private var pushed = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                if inside, !pushed {
+                    NSCursor.pointingHand.push()
+                    pushed = true
+                } else if !inside, pushed {
+                    NSCursor.pop()
+                    pushed = false
+                }
+            }
+            .onDisappear {
+                if pushed {
+                    NSCursor.pop()
+                    pushed = false
+                }
+            }
+    }
+}
+
+extension View {
+    func pointerCursor() -> some View { modifier(PointerCursor()) }
+}
 
 /// The search field, shared by both panes.
 struct SearchField: View {

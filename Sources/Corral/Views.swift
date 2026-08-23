@@ -161,6 +161,7 @@ private struct HeaderView: View {
             Stat(value: value, label: label, selected: model.trendMetric == metric)
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .help("Plot \(metric.label.lowercased()) in the graph")
     }
 
@@ -235,6 +236,7 @@ private struct HeaderGraph: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { model.cycleTrendRange() }
+        .pointerCursor()
         .help(
             "\(metric.label) over the last \(model.trendRange.label), in "
             + "30-second steps. Click to switch between 15m, 1h and 3h; click a "
@@ -327,6 +329,7 @@ private struct FilterBar: View {
             .foregroundStyle(selected ? color : Theme.subtle)
         }
         .buttonStyle(.plain)
+        .pointerCursor()
     }
 }
 
@@ -345,6 +348,7 @@ private struct StateLegendButton: View {
                 .foregroundStyle(Theme.faint)
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .help("What the status colours mean")
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             StateLegend()
@@ -513,7 +517,7 @@ private struct AgentRow: View {
         HStack(spacing: 12) {
             ToolGlyph(
                 tool: group.root.tool,
-                executablePaths: group.all.compactMap(\.executablePath),
+                executablePath: group.root.executablePath,
                 terminal: group.root.tty != nil,
                 size: 18
             )

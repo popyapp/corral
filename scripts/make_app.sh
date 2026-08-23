@@ -4,9 +4,22 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# One source of truth for the base version. CI appends the run number to it;
-# a local build just uses it as-is.
-VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo 0.0.0)}"
+# CI passes VERSION in (the base in ./VERSION plus the run number), and that is
+# the released number. A local build has no run number, and reporting the bare
+# base — "0.1" — tells you nothing about what you are actually running. Git
+# already knows: the last release tag, plus how far past it this tree is.
+if [ -z "${VERSION:-}" ]; then
+    TAG="$(git describe --tags --match 'v*' --abbrev=0 2>/dev/null || true)"
+    if [ -n "$TAG" ]; then
+        AHEAD="$(git rev-list --count "$TAG"..HEAD 2>/dev/null || echo 0)"
+        # "+3" is semver's build-metadata separator, which is exactly what this
+        # is: the 0.1.5 release, plus three commits.
+        [ "$AHEAD" -gt 0 ] && VERSION="${TAG#v}+$AHEAD" || VERSION="${TAG#v}"
+    else
+        # No tags fetched (a shallow clone, or a fork that has never released).
+        VERSION="$(cat VERSION 2>/dev/null || echo 0.0.0)"
+    fi
+fi
 # A binary built from a tree with uncommitted changes corresponds to no commit,
 # and the About panel says so rather than naming a commit it does not match.
 # CI checks out clean, and passes COMMIT in anyway, so this only fires locally.

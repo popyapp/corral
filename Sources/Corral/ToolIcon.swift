@@ -63,21 +63,25 @@ enum ToolIcon {
         return dirs
     }
 
-    /// The icon for a group, given the executable paths of its processes.
+    /// The icon for an agent, from the **root** process's executable path.
     ///
-    /// `paths` should be every process in the group: the agent itself may be a
-    /// bare binary while one of its children runs from inside the bundle, and
-    /// either one is enough to find the product.
+    /// Takes one path, not the group's, and that is the whole point. Searching
+    /// every process in the group for a bundle looks more thorough and is
+    /// wrong: an MCP server can be any binary at all, including one that lives
+    /// inside somebody else's app. A Claude Code agent running an MCP server
+    /// from `/Applications/Pencil.app/...` was drawn with Pencil's icon.
+    ///
+    /// A child's bundle identifies the child. Only the root identifies the
+    /// agent — the same rule `ToolCatalog` already follows when it attributes a
+    /// child to its parent's tool rather than recognising it on its own.
     @MainActor
-    static func image(for tool: Tool, executablePaths paths: [String]) -> NSImage? {
-        for path in paths {
-            if let bundle = bundlePath(forExecutable: path) {
-                if let cached = images[bundle] { return cached }
-                if FileManager.default.fileExists(atPath: bundle) {
-                    let icon = NSWorkspace.shared.icon(forFile: bundle)
-                    images[bundle] = icon
-                    return icon
-                }
+    static func image(for tool: Tool, executablePath path: String?) -> NSImage? {
+        if let path, let bundle = bundlePath(forExecutable: path) {
+            if let cached = images[bundle] { return cached }
+            if FileManager.default.fileExists(atPath: bundle) {
+                let icon = NSWorkspace.shared.icon(forFile: bundle)
+                images[bundle] = icon
+                return icon
             }
         }
         return vendorImage(for: tool)
@@ -117,7 +121,9 @@ enum ToolIcon {
 /// the distinction is still there to read.
 struct ToolGlyph: View {
     let tool: Tool
-    var executablePaths: [String] = []
+    /// The root process's executable path — never a child's. See
+    /// `ToolIcon.image(for:executablePath:)`.
+    var executablePath: String?
     /// Whether this agent has a controlling terminal.
     ///
     /// Taken from the process, not from which tool it is: `.codex` covers both
@@ -127,7 +133,7 @@ struct ToolGlyph: View {
     var size: CGFloat = 16
 
     var body: some View {
-        if let icon = ToolIcon.image(for: tool, executablePaths: executablePaths) {
+        if let icon = ToolIcon.image(for: tool, executablePath: executablePath) {
             Image(nsImage: icon)
                 .resizable()
                 .interpolation(.high)

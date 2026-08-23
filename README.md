@@ -162,10 +162,10 @@ listing its SHA-256 and the exact commit it came from — `Corral --version`
 prints that commit back to you, and **About Corral** shows the same pair as
 `Version 0.1.5 (a1b2c3d)`, with the hash linking to that commit on GitHub.
 
-A build made locally with `make app` has no release number, so it reports the
-base version from `VERSION` (`0.1`) rather than a three-part one; if the tree
-had uncommitted changes, the hash carries a `-dirty` suffix and About says the
-binary matches no commit.
+A build made locally with `make app` has no release number, so it takes one
+from git instead: the last release tag plus how far past it the tree is, as
+`0.1.5+3`. If the tree had uncommitted changes the hash carries a `-dirty`
+suffix, and About says the binary matches no commit at all.
 
 Builds are ad-hoc signed rather than notarised, so the first launch needs
 right-click → Open.

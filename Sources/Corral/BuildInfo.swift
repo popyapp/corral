@@ -35,7 +35,9 @@ enum BuildInfo {
     /// what a download reports and what `make app` reports, which is the
     /// question people actually have.
     static var isReleaseBuild: Bool {
-        !isDirty && version.split(separator: ".").count >= 3
+        // A local build carries git's "+<commits since the tag>" suffix, so it
+        // is a released number plus something — which is not a release.
+        !isDirty && !version.contains("+") && version.split(separator: ".").count >= 3
     }
 
     static var repositoryURL: URL {

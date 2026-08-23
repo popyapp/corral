@@ -235,6 +235,27 @@ final class ToolIconTests: XCTestCase {
         )
     }
 
+    /// The trap this API's shape exists to prevent.
+    ///
+    /// An MCP server can be any binary, including one inside somebody else's
+    /// app. Consulting a group's child paths to find a bundle drew a Claude
+    /// Code agent with Pencil's icon, because its MCP server lives in
+    /// Pencil.app. The path resolves perfectly well — that is the problem — so
+    /// the fix is that only the root process's path is ever passed in.
+    func testAChildsBundleIsNotTheAgentsBundle() {
+        let mcpServer = "/Applications/Pencil.app/Contents/Resources/"
+            + "app.asar.unpacked/out/mcp-server-darwin-arm64"
+        XCTAssertEqual(
+            ToolIcon.bundlePath(forExecutable: mcpServer),
+            "/Applications/Pencil.app",
+            "resolves fine, which is why it must never be asked about the agent"
+        )
+        // The agent itself: a bare binary with no bundle to confuse it with.
+        XCTAssertNil(
+            ToolIcon.bundlePath(forExecutable: "/Users/x/.local/share/claude/versions/2.1.228")
+        )
+    }
+
     /// A CLI agent is a bare binary. It has no bundle, and saying so is what
     /// sends the caller to the vendor-app fallback instead of a wrong guess.
     func testABareBinaryHasNoBundle() {
