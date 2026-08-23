@@ -109,9 +109,21 @@ enum ToolIcon {
 /// Deliberately not tinted. A real icon carries the product's own colour, and
 /// recolouring it would both look wrong and defeat the point of showing it.
 /// The row's colour spine still does the scan-down-the-list job.
+///
+/// Claude Code and Claude the desktop app therefore wear the same icon, which
+/// is right — they are one product — but leaves them indistinguishable in a
+/// list where one is a terminal session in a project and the other is a chat
+/// window. A `$` badge marks the terminal ones, so the brand stays intact and
+/// the distinction is still there to read.
 struct ToolGlyph: View {
     let tool: Tool
     var executablePaths: [String] = []
+    /// Whether this agent has a controlling terminal.
+    ///
+    /// Taken from the process, not from which tool it is: `.codex` covers both
+    /// the CLI and the processes inside ChatGPT.app, and only one of those is a
+    /// terminal session. The kernel already knows which.
+    var terminal = false
     var size: CGFloat = 16
 
     var body: some View {
@@ -120,11 +132,39 @@ struct ToolGlyph: View {
                 .resizable()
                 .interpolation(.high)
                 .frame(width: size, height: size)
+                .overlay(alignment: .bottomTrailing) {
+                    if terminal { TerminalBadge(size: size) }
+                }
         } else {
+            // No badge here: the fallback symbol for a CLI tool is already a
+            // terminal, and stamping a `$` on a terminal glyph says it twice.
             Image(systemName: tool.symbol)
                 .font(.system(size: size * 0.85))
                 .foregroundStyle(Theme.accent(for: tool))
                 .frame(width: size, height: size)
         }
+    }
+}
+
+/// The shell-prompt `$`, small enough to read as a modifier rather than a
+/// second icon.
+private struct TerminalBadge: View {
+    let size: CGFloat
+
+    var body: some View {
+        let diameter = max(9, size * 0.55)
+        Text("$")
+            .font(.system(size: diameter * 0.72, weight: .bold, design: .monospaced))
+            .foregroundStyle(Color(nsColor: .controlBackgroundColor))
+            .frame(width: diameter, height: diameter)
+            .background(Circle().fill(Color.primary.opacity(0.75)))
+            // A ring in the row's own colour, so the badge reads as sitting on
+            // top of the icon rather than being part of the artwork.
+            .overlay(
+                Circle().strokeBorder(Theme.rowBackground, lineWidth: 1.2)
+            )
+            // Hangs off the corner: centred on the icon's edge it would cover
+            // the artwork it is meant to annotate.
+            .offset(x: diameter * 0.28, y: diameter * 0.28)
     }
 }

@@ -160,7 +160,7 @@ Download the latest `Corral-<version>.dmg` from the
 Corral to Applications. Every commit on `main` publishes a build, each one
 listing its SHA-256 and the exact commit it came from — `Corral --version`
 prints that commit back to you, and **About Corral** shows the same pair as
-`Version 0.1.4 (a1b2c3d)`, with the hash linking to that commit on GitHub.
+`Version 0.1.5 (a1b2c3d)`, with the hash linking to that commit on GitHub.
 
 A build made locally with `make app` has no release number, so it reports the
 base version from `VERSION` (`0.1`) rather than a three-part one; if the tree

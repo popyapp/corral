@@ -514,6 +514,7 @@ private struct AgentRow: View {
             ToolGlyph(
                 tool: group.root.tool,
                 executablePaths: group.all.compactMap(\.executablePath),
+                terminal: group.root.tty != nil,
                 size: 18
             )
             .frame(width: 22)
