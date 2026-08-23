@@ -44,6 +44,9 @@ enum BuildInfo {
         URL(string: "https://github.com/\(repository)")!
     }
 
+    /// The rest of the apps this one belongs to.
+    static var homeURL: URL { URL(string: "https://popy.app")! }
+
     /// The exact commit this was built from, when there is one to point at.
     static var commitURL: URL? {
         guard !isDirty else { return nil }

@@ -70,8 +70,8 @@ enum AboutPanel {
             ))
         } else if !BuildInfo.isReleaseBuild {
             text.append(NSAttributedString(
-                string: "\nLocal build. Released versions carry a build number "
-                    + "(0.1.4), not just the base version.",
+                string: "\nLocal build — the number after + is how many commits "
+                    + "past that release this was built from.",
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 10),
                     .foregroundColor: NSColor.tertiaryLabelColor,
@@ -79,14 +79,24 @@ enum AboutPanel {
             ))
         }
 
+        func link(_ title: String, _ url: URL) -> NSAttributedString {
+            NSAttributedString(
+                string: title,
+                attributes: [
+                    .font: body,
+                    .foregroundColor: NSColor.linkColor,
+                    .link: url,
+                ]
+            )
+        }
+
+        text.append(NSAttributedString(string: "\n\n", attributes: [.font: body]))
+        text.append(link("popy.app", BuildInfo.homeURL))
         text.append(NSAttributedString(
-            string: "\n\ngithub.com/popyapp/corral",
-            attributes: [
-                .font: body,
-                .foregroundColor: NSColor.linkColor,
-                .link: BuildInfo.repositoryURL,
-            ]
+            string: "  ·  ",
+            attributes: [.font: body, .foregroundColor: NSColor.tertiaryLabelColor]
         ))
+        text.append(link("github.com/popyapp/corral", BuildInfo.repositoryURL))
 
         let centred = NSMutableParagraphStyle()
         centred.alignment = .center

@@ -20,6 +20,18 @@ final class CorralViewModel: ObservableObject {
     @Published var trendRange: TrendRange = .hour
     /// Which figure the header graph plots. Clicking a number selects it.
     @Published var trendMetric: TrendMetric = .cpu
+
+    /// How the list is ordered. Remembered between launches — a sort you have
+    /// to set again every morning is worse than no sort at all.
+    @Published var sort: AgentSort = .uptime {
+        didSet { UserDefaults.standard.set(sort.rawValue, forKey: Self.sortKey) }
+    }
+    @Published var sortReversed = false {
+        didSet { UserDefaults.standard.set(sortReversed, forKey: Self.reversedKey) }
+    }
+
+    private static let sortKey = "agentSort"
+    private static let reversedKey = "agentSortReversed"
     @Published var banner: Banner?
 
     struct Banner: Identifiable, Equatable {
@@ -38,6 +50,12 @@ final class CorralViewModel: ObservableObject {
     private var timer: Timer?
 
     init() {
+        let defaults = UserDefaults.standard
+        if let raw = defaults.string(forKey: Self.sortKey),
+           let restored = AgentSort(rawValue: raw) {
+            sort = restored
+        }
+        sortReversed = defaults.bool(forKey: Self.reversedKey)
         refresh()
         // Two seconds is fast enough that the numbers feel live and slow
         // enough that scanning ~500 processes costs nothing noticeable.
@@ -47,6 +65,19 @@ final class CorralViewModel: ObservableObject {
     }
 
     deinit { timer?.invalidate() }
+
+    #if DEBUG
+    /// Test seam: a fixed set of groups, no process scan and no refresh timer.
+    ///
+    /// The designated initialiser scans the machine and starts a 2-second
+    /// timer, which makes ordering untestable — the answer would depend on
+    /// whatever happened to be running.
+    init(groupsForTesting groups: [AgentGroup], sort: AgentSort = .uptime) {
+        self.groups = groups
+        self.sort = sort
+        self.sortReversed = false
+    }
+    #endif
 
     // ─ Data ─────────────────────────────────────────────────────────────────
 
@@ -93,8 +124,52 @@ final class CorralViewModel: ObservableObject {
         if let toolFilter { result = result.filter { $0.root.tool == toolFilter } }
 
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !needle.isEmpty else { return result }
-        return result.filter { matches($0, needle) }
+        if !needle.isEmpty { result = result.filter { matches($0, needle) } }
+        return ordered(result)
+    }
+
+    /// The list re-sorts every two seconds, so ties must break the same way
+    /// every time. Swift's sort is not stable, and without the pid tiebreak two
+    /// agents with equal memory — or the many that sit at 0% CPU — would swap
+    /// places on every refresh and the whole list would flicker.
+    private func ordered(_ groups: [AgentGroup]) -> [AgentGroup] {
+        let result = groups.sorted { a, b in
+            switch sort {
+            case .uptime:
+                if a.root.startedAt != b.root.startedAt {
+                    return a.root.startedAt < b.root.startedAt
+                }
+            case .memory:
+                if a.totalResidentBytes != b.totalResidentBytes {
+                    return a.totalResidentBytes > b.totalResidentBytes
+                }
+            case .cpu:
+                let (left, right) = (load(of: a), load(of: b))
+                if left != right { return left > right }
+            case .project:
+                let comparison = label(for: a)
+                    .localizedCaseInsensitiveCompare(label(for: b))
+                if comparison != .orderedSame { return comparison == .orderedAscending }
+            }
+            return a.root.pid < b.root.pid
+        }
+        return sortReversed ? result.reversed() : result
+    }
+
+    /// A group's CPU is the whole tree's: an agent parked while its build burns
+    /// a core is a busy row, and sorting by CPU should surface it.
+    func load(of group: AgentGroup) -> Double {
+        group.all.reduce(0.0) { $0 + activity(for: $1.pid).cpuLoad }
+    }
+
+    /// Picking the order already in use reverses it.
+    func apply(sort option: AgentSort) {
+        if sort == option {
+            sortReversed.toggle()
+        } else {
+            sort = option
+            sortReversed = false
+        }
     }
 
     /// Search across everything that identifies an agent — the project name and

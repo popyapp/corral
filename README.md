@@ -71,6 +71,11 @@ idle, what it spawned, and what it is costing you.
   "2.92 GB" cannot tell you whether that is the calm after you closed six agents
   or the start of a climb; the graph can. A missing column is a stretch when
   Corral was not running — it will not draw across a sleep it did not observe.
+- **Sorting.** By how long it has been running (the default — the thing you
+  forgot about is the thing you came here to find), by memory, by CPU across the
+  whole group, or by project name. Each order has an obvious direction, so
+  picking one applies it; picking the same one again reverses it. Remembered
+  between launches.
 - **Search.** ⌘F in either pane. An agent matches on its project, path, tool,
   version, pid, terminal, command line — and on what it spawned, so searching
   for an MCP server finds the agent running it.

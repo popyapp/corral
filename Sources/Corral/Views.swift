@@ -295,6 +295,7 @@ private struct FilterBar: View {
                 chip(title: tool.displayName, count: model.count(of: tool), tool: tool)
             }
             Spacer(minLength: 10)
+            SortMenu()
             StateLegendButton()
             SearchField(text: $model.query, placeholder: "Project, tool, pid…")
         }
@@ -330,6 +331,60 @@ private struct FilterBar: View {
         }
         .buttonStyle(.plain)
         .pointerCursor()
+    }
+}
+
+/// How the list is ordered.
+///
+/// Four orders, each with its own obvious direction, so choosing one does not
+/// also mean choosing a direction. Choosing the one already in use reverses it
+/// — the table-header idiom, minus the table.
+private struct SortMenu: View {
+    @EnvironmentObject private var model: CorralViewModel
+
+    var body: some View {
+        Menu {
+            ForEach(AgentSort.allCases) { option in
+                Button {
+                    model.apply(sort: option)
+                } label: {
+                    if model.sort == option {
+                        Label(
+                            "\(option.label) — \(direction(option))",
+                            systemImage: model.sortReversed ? "arrow.up" : "arrow.down"
+                        )
+                    } else {
+                        Label(option.label, systemImage: option.symbol)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: model.sortReversed ? "arrow.up" : "arrow.down")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(model.sort.label)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(Theme.subtle)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .pointerCursor()
+        .help("Sorted by \(model.sort.label.lowercased()), \(direction(model.sort)). "
+            + "Pick the same one again to reverse it.")
+    }
+
+    /// What the current arrow means, in words — "largest first" is a thing you
+    /// can read, an arrow on its own is a thing you have to work out.
+    private func direction(_ option: AgentSort) -> String {
+        guard model.sortReversed else { return option.naturalDirection }
+        switch option {
+        case .uptime: return "newest first"
+        case .memory: return "smallest first"
+        case .cpu: return "quietest first"
+        case .project: return "Z to A"
+        }
     }
 }
 

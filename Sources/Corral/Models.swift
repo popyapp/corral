@@ -232,6 +232,51 @@ struct Activity {
     }
 }
 
+/// How the list is ordered.
+///
+/// Each order has an obvious direction — the biggest consumer, the busiest, the
+/// one you left running longest — so picking one applies that direction rather
+/// than making you set it separately. Picking the one already in use reverses
+/// it, for the times you want the other end.
+enum AgentSort: String, CaseIterable, Identifiable, Codable {
+    /// Longest-running first. The default: the thing you forgot about is the
+    /// thing you came here to find.
+    case uptime
+    case memory
+    case cpu
+    case project
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .uptime: return "Uptime"
+        case .memory: return "Memory"
+        case .cpu: return "CPU"
+        case .project: return "Project"
+        }
+    }
+
+    /// What the arrow in the menu means for this order when it is not reversed.
+    var naturalDirection: String {
+        switch self {
+        case .uptime: return "oldest first"
+        case .memory: return "largest first"
+        case .cpu: return "busiest first"
+        case .project: return "A to Z"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .uptime: return "clock"
+        case .memory: return "memorychip"
+        case .cpu: return "gauge.with.dots.needle.50percent"
+        case .project: return "textformat.abc"
+        }
+    }
+}
+
 /// What an agent group is doing, in the terms someone deciding whether to kill
 /// it actually thinks in.
 ///

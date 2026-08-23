@@ -263,3 +263,109 @@ final class ToolIconTests: XCTestCase {
         XCTAssertNil(ToolIcon.bundlePath(forExecutable: "/opt/homebrew/bin/codex"))
     }
 }
+
+
+/// List ordering.
+///
+/// The tiebreak is the part worth pinning: the list re-sorts every two seconds,
+/// Swift's sort is not stable, and the common case is many agents sitting at
+/// exactly 0% CPU. Without a deterministic tiebreak those rows would swap
+/// places on every refresh and the whole window would flicker.
+@MainActor
+final class AgentSortTests: XCTestCase {
+
+    /// One reference instant for the whole test. Calling `Date()` per fixture
+    /// put microseconds between three agents that are meant to be tied, so the
+    /// uptime comparison separated them and never reached the tiebreak.
+    private let base = Date()
+
+    private func process(
+        pid: pid_t,
+        project: String,
+        memory: UInt64,
+        startedAgo: TimeInterval
+    ) -> AgentProcess {
+        AgentProcess(
+            pid: pid,
+            ppid: 1,
+            tool: .claudeCode,
+            role: .agent,
+            comm: "2.1.228",
+            executablePath: "/Users/x/.local/share/claude/versions/2.1.228",
+            arguments: ["claude"],
+            workingDirectory: "/code/\(project)",
+            residentBytes: memory,
+            cpuSeconds: 0,
+            startedAt: base.addingTimeInterval(-startedAgo),
+            version: "2.1.228",
+            tty: "/dev/ttys001",
+            lastTerminalActivity: nil
+        )
+    }
+
+    private func group(
+        pid: pid_t,
+        project: String,
+        memory: UInt64,
+        startedAgo: TimeInterval
+    ) -> AgentGroup {
+        AgentGroup(
+            root: process(
+                pid: pid, project: project, memory: memory, startedAgo: startedAgo
+            ),
+            children: []
+        )
+    }
+
+    /// Same memory, same CPU, same age — only the pid separates them, and it
+    /// has to, every time.
+    func testEqualRowsKeepAStableOrder() {
+        let a = group(pid: 300, project: "alpha", memory: 1000, startedAgo: 100)
+        let b = group(pid: 100, project: "beta", memory: 1000, startedAgo: 100)
+        let c = group(pid: 200, project: "gamma", memory: 1000, startedAgo: 100)
+
+        for sort in AgentSort.allCases where sort != .project {
+            let model = CorralViewModel(groupsForTesting: [a, b, c], sort: sort)
+            let first = model.visibleGroups.map(\.root.pid)
+            let second = model.visibleGroups.map(\.root.pid)
+            XCTAssertEqual(first, second, "\(sort) must not shuffle equal rows")
+            XCTAssertEqual(first, [100, 200, 300], "ties break on pid, ascending")
+        }
+    }
+
+    func testMemorySortsLargestFirstAndReverses() {
+        let small = group(pid: 1, project: "small", memory: 1_000, startedAgo: 10)
+        let large = group(pid: 2, project: "large", memory: 9_000, startedAgo: 10)
+        let model = CorralViewModel(groupsForTesting: [small, large], sort: .memory)
+        XCTAssertEqual(model.visibleGroups.map(\.root.pid), [2, 1])
+
+        model.apply(sort: .memory)   // picking it again reverses
+        XCTAssertTrue(model.sortReversed)
+        XCTAssertEqual(model.visibleGroups.map(\.root.pid), [1, 2])
+    }
+
+    func testUptimeSortsOldestFirst() {
+        let fresh = group(pid: 1, project: "fresh", memory: 10, startedAgo: 60)
+        let old = group(pid: 2, project: "old", memory: 10, startedAgo: 86_400)
+        let model = CorralViewModel(groupsForTesting: [fresh, old], sort: .uptime)
+        XCTAssertEqual(model.visibleGroups.map(\.root.pid), [2, 1])
+    }
+
+    func testProjectSortsByNameCaseInsensitively() {
+        let zebra = group(pid: 1, project: "Zebra", memory: 10, startedAgo: 10)
+        let apple = group(pid: 2, project: "apple", memory: 10, startedAgo: 10)
+        let model = CorralViewModel(groupsForTesting: [zebra, apple], sort: .project)
+        XCTAssertEqual(model.visibleGroups.map(\.root.pid), [2, 1])
+    }
+
+    /// Choosing a different order clears any reversal, so a fresh choice always
+    /// lands on that order's natural direction.
+    func testChoosingAnotherOrderClearsTheReversal() {
+        let model = CorralViewModel(groupsForTesting: [], sort: .memory)
+        model.apply(sort: .memory)
+        XCTAssertTrue(model.sortReversed)
+        model.apply(sort: .cpu)
+        XCTAssertEqual(model.sort, .cpu)
+        XCTAssertFalse(model.sortReversed)
+    }
+}
