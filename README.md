@@ -4,7 +4,7 @@
 
 # Corral
 
-**Corral your runaway coding agents.**
+**Activity Monitor for Your Local AI Agents**
 
 A free, open-source, native macOS app that shows you every Claude Code, Codex
 and Cursor process on your machine — what project it belongs to, how long it has
