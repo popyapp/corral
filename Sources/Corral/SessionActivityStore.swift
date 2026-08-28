@@ -23,7 +23,11 @@ final class SessionActivityStore {
         readers: [Tool: SessionActivityReader] = [
             .claudeCode: ClaudeSessionActivityReader(),
             .codex: CodexSessionActivityReader(),
-            .cursorAgent: CursorSessionActivityReader(),
+            // The CLI agent and the editor keep their conversations in
+            // different places; the agent Corral lists from a terminal is the
+            // CLI one.
+            .cursorAgent: CursorCLISessionActivityReader(),
+            .cursor: CursorSessionActivityReader(),
         ],
         ttl: TimeInterval = 3
     ) {
