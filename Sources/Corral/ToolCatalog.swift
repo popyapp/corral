@@ -14,6 +14,12 @@ import Foundation
 ///     `/System/Library/PrivateFrameworks/…`, which has nothing to do with the
 ///     Cursor editor. An app that offered to kill it would be worse than no app
 ///     at all. Everything under `/System` and `/usr/libexec` is refused outright.
+///
+///  3. A name is not trustworthy even when the tool has one. Cursor's CLI ships
+///     a shell wrapper that exports `CURSOR_INVOKED_AS="$(basename "$0")"` — it
+///     is *meant* to be symlinked under any name you like (`agent`, here) — and
+///     the wrapper then execs a bundled `node`, so the kernel reports `node`.
+///     Neither end of that chain says "cursor". The install directory does.
 enum ToolCatalog {
 
     /// Prefixes that can never be one of our tools, whatever they are called.
@@ -39,7 +45,7 @@ enum ToolCatalog {
         if path.contains("/.local/share/claude/versions/") { return true }
         if path.contains("/@anthropic-ai/claude-code/") { return true }
         if path.contains("/@openai/codex") || path.contains("/.codex/") { return true }
-        if path.contains("/.cursor/") { return true }
+        if path.contains("/.cursor/") || path.contains("/cursor-agent/") { return true }
         if electronApps.contains(where: { path.contains($0.bundle) }) { return true }
         if path.contains("/ChatGPT.app/") { return true }
         let name = (path as NSString).lastPathComponent
@@ -174,6 +180,23 @@ enum ToolCatalog {
 
     private static func cursorAgent(path: String, raw: ProcessScanner.Raw) -> Match? {
         let name = (path as NSString).lastPathComponent
+
+        // The versioned install, `~/.local/share/cursor-agent/versions/<v>/`.
+        //
+        // Same shape as Claude Code's, with one difference that matters: for
+        // Claude the version *is* the executable, so anything below it is a
+        // helper. Cursor ships a directory and runs a bundled `node` inside it,
+        // so the agent itself is one level down. Borrowing claudeCode's
+        // "deeper means helper" rule here would file every real agent as a
+        // child and leave the list empty, which is the bug this branch fixes.
+        if let range = path.range(of: "/cursor-agent/versions/") {
+            return Match(
+                tool: .cursorAgent,
+                role: .agent,
+                version: path[range.upperBound...].split(separator: "/").first.map(String.init)
+            )
+        }
+        if path.contains("/cursor-agent/") { return Match(tool: .cursorAgent, role: .agent, version: nil) }
         if name == "cursor-agent" { return Match(tool: .cursorAgent, role: .agent, version: nil) }
         if path.contains("/.cursor/") && name != "cursor" {
             return Match(tool: .cursorAgent, role: .agent, version: nil)

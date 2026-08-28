@@ -135,6 +135,42 @@ final class ToolCatalogTests: XCTestCase {
         XCTAssertEqual(match.role, .agent)
     }
 
+    /// The shape a real `cursor-agent` install actually produces, taken from a
+    /// live process table — and the one this catalog used to miss entirely.
+    ///
+    /// Nothing in the chain says "cursor" where you would look for it. The user
+    /// symlinks it as `agent`, that wrapper is a shell script, and the script
+    /// execs a bundled `node` — so the kernel reports the executable as `node`.
+    /// Only the install directory survives all three hops.
+    func testCursorAgentVersionedInstall() throws {
+        let match = try XCTUnwrap(
+            ToolCatalog.identify(
+                raw("/Users/someone/.local/share/cursor-agent/versions/2026.08.25-3e8eec8/node",
+                    args: [
+                        "/Users/someone/.local/bin/agent",
+                        "--use-system-ca",
+                        "/Users/someone/.local/share/cursor-agent/versions/2026.08.25-3e8eec8/index.js",
+                    ],
+                    comm: "node")
+            )
+        )
+        XCTAssertEqual(match.tool, .cursorAgent)
+        // Not `.helper`: unlike Claude, where the version is the executable and
+        // anything below it is a helper, Cursor's real agent lives one level
+        // under the version directory.
+        XCTAssertEqual(match.role, .agent)
+        XCTAssertEqual(match.version, "2026.08.25-3e8eec8")
+    }
+
+    /// The pre-filter must never reject something `identify` would accept.
+    func testCursorAgentVersionedInstallPassesPreFilter() {
+        XCTAssertTrue(
+            ToolCatalog.pathLooksLikeATool(
+                "/Users/someone/.local/share/cursor-agent/versions/2026.08.25-3e8eec8/node"
+            )
+        )
+    }
+
     /// The trap this whole design exists to avoid.
     ///
     /// macOS ships `CursorUIViewService`, a text-input helper. It has nothing
