@@ -25,9 +25,11 @@ struct ClaudeSessionActivityReader: SessionActivityReader {
         String(cwd.map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "-" })
     }
 
-    func activity(inProject cwd: String, startedAt: Date) -> SessionActivity? {
-        for file in transcripts(for: cwd, startedAt: startedAt) {
-            if let hit = scan(file, expecting: cwd, startedAt: startedAt) { return hit }
+    func reading(_ lookup: SessionLookup) -> SessionActivityReading? {
+        for file in transcripts(for: lookup) where !lookup.claimed.contains(file.path) {
+            if let hit = scan(file, expecting: lookup.project, startedAt: lookup.startedAt) {
+                return SessionActivityReading(activity: hit, source: file.path)
+            }
         }
         return nil
     }
@@ -38,18 +40,31 @@ struct ClaudeSessionActivityReader: SessionActivityReader {
     /// another, and old ones are never cleaned up. Nothing in a transcript
     /// records a pid, so the file cannot be tied to the process directly; what
     /// rules the old ones out is time, in `scan`.
-    private func transcripts(for cwd: String, startedAt: Date) -> [URL] {
-        let folder = root.appendingPathComponent(Self.directoryName(for: cwd))
+    private func transcripts(for lookup: SessionLookup) -> [URL] {
+        let folder = root.appendingPathComponent(Self.directoryName(for: lookup.project))
         let contents = (try? FileManager.default.contentsOfDirectory(
             at: folder,
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         )) ?? []
-        return contents
+        var candidates = contents
             .filter { $0.pathExtension == "jsonl" }
             .sorted { modified($0) > modified($1) }
             .prefix(5)
             .map { $0 }
+
+        // A name beats every heuristic — when the file is really there.
+        // CLAUDE_CODE_SESSION_ID is the session the process was launched as,
+        // and a session that has since been resumed or forked writes somewhere
+        // else, so this is a promotion rather than a shortcut.
+        if let id = lookup.sessionId {
+            let named = folder.appendingPathComponent("\(id).jsonl")
+            if FileManager.default.fileExists(atPath: named.path) {
+                candidates.removeAll { $0.path == named.path }
+                candidates.insert(named, at: 0)
+            }
+        }
+        return candidates
     }
 
     private func modified(_ url: URL) -> Date {

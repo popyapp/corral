@@ -35,6 +35,10 @@ final class AgentInventory {
     /// also say what the agent is *doing* depends on the tool, not the process.
     private let sessionActivities = SessionActivityStore()
 
+    /// Claude Code's session id, cached per process: it is fixed for the life
+    /// of the agent and reading it costs a sysctl over a megabyte buffer.
+    private var sessionIdCache: [pid_t: String?] = [:]
+
     private(set) var groups: [AgentGroup] = []
     private(set) var activity: [pid_t: Activity] = [:]
     private(set) var lastRefresh: Date?
@@ -167,9 +171,8 @@ final class AgentInventory {
         }
 
         updateActivity(for: built, at: now)
-        sessionActivities.forget(
-            keeping: Set(built.compactMap { $0.root.workingDirectory })
-        )
+        sessionIdCache = sessionIdCache.filter { liveProcesses.contains($0.key) }
+        sessionActivities.refresh(built, sessionId: sessionId(for:), now: now)
         groups = built.sorted {
             // Longest-running first: the thing you forgot about is the thing
             // you came here to find.
@@ -318,11 +321,29 @@ final class AgentInventory {
     /// keeps for itself. Nil when the tool writes no log Corral can read, or
     /// when the session has not said anything yet.
     func sessionActivity(for group: AgentGroup) -> SessionActivity? {
-        sessionActivities.activity(
-            for: group.root.tool,
-            inProject: group.root.workingDirectory,
-            startedAt: group.root.startedAt
-        )
+        sessionActivities.activity(for: group.root.pid)
+    }
+
+    /// The session id Claude Code was launched with.
+    ///
+    /// It is not on the agent process. Claude Code exports it *for* the things
+    /// it launches, so it is read off a child — any of them, they all inherit
+    /// the same value. Only this one variable is ever read; see
+    /// `ProcessScanner.environmentValue`.
+    private func sessionId(for group: AgentGroup) -> String? {
+        guard group.root.tool == .claudeCode else { return nil }
+        if let cached = sessionIdCache[group.root.pid] { return cached }
+        var found: String?
+        for process in group.all {
+            if let id = ProcessScanner.environmentValue(
+                "CLAUDE_CODE_SESSION_ID", of: process.pid
+            ) {
+                found = id
+                break
+            }
+        }
+        sessionIdCache[group.root.pid] = found
+        return found
     }
 
     func groupActivity(for group: AgentGroup) -> GroupActivity {

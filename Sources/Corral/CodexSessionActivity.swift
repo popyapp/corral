@@ -16,9 +16,12 @@ struct CodexSessionActivityReader: SessionActivityReader {
         self.root = root
     }
 
-    func activity(inProject cwd: String, startedAt: Date) -> SessionActivity? {
-        for file in recentSessions() where Self.projectPath(of: file) == cwd {
-            if let hit = scan(file) { return hit }
+    func reading(_ lookup: SessionLookup) -> SessionActivityReading? {
+        for file in recentSessions()
+        where !lookup.claimed.contains(file.path) && Self.projectPath(of: file) == lookup.project {
+            if let hit = scan(file), hit.at >= lookup.startedAt {
+                return SessionActivityReading(activity: hit, source: file.path)
+            }
         }
         return nil
     }

@@ -27,17 +27,21 @@ struct CursorSessionActivityReader: SessionActivityReader {
         self.database = database
     }
 
-    func activity(inProject cwd: String, startedAt: Date) -> SessionActivity? {
-        var best: SessionActivity?
+    func reading(_ lookup: SessionLookup) -> SessionActivityReading? {
+        var best: SessionActivityReading?
         for value in composerRows() {
             guard let data = value.data(using: .utf8),
                   let row = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  Self.projectPath(row) == cwd,
+                  Self.projectPath(row) == lookup.project,
+                  let id = row["composerId"] as? String, !lookup.claimed.contains(id),
                   let at = Self.updatedAt(row),
                   let summary = Self.summarise(row)
             else { continue }
-            if best == nil || at > best!.at {
-                best = SessionActivity(summary: summary, at: at, fromSubagent: false)
+            if best == nil || at > best!.activity.at {
+                best = SessionActivityReading(
+                    activity: SessionActivity(summary: summary, at: at, fromSubagent: false),
+                    source: id
+                )
             }
         }
         return best

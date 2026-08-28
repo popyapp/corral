@@ -64,12 +64,30 @@ enum FileTail {
 /// Reads one tool's session logs. Implementations must be cheap enough to call
 /// on every refresh and must never throw — a log we cannot read is a line we
 /// do not show, not an error the user has to deal with.
+/// Everything a reader is told about the agent it is describing.
+struct SessionLookup {
+    /// Where the agent process is running.
+    let project: String
+    /// When the process started. A session cannot have stopped writing before
+    /// its own process existed, which is what rules out abandoned logs.
+    let startedAt: Date
+    /// A session identifier taken from the process, when it gave one up. Exact
+    /// when it resolves to a real log; it does not always, because a resumed
+    /// session can end up writing somewhere other than where it began.
+    let sessionId: String?
+    /// Logs already handed to another agent in this round. Nothing in these
+    /// files records a pid, so without this two agents in one project are both
+    /// described by whichever of them typed last — which is worse than saying
+    /// nothing, because it reads as fact.
+    let claimed: Set<String>
+}
+
+struct SessionActivityReading {
+    let activity: SessionActivity
+    /// Identifies the log this came out of, so it is not used twice.
+    let source: String
+}
+
 protocol SessionActivityReader {
-    /// The most recent activity for the session a process started at
-    /// `startedAt` is running in `cwd`.
-    ///
-    /// The start time is what separates two agents working in the same
-    /// project. Nothing in these logs records a pid, so the closest thing to an
-    /// identity a session has is when it began.
-    func activity(inProject cwd: String, startedAt: Date) -> SessionActivity?
+    func reading(_ lookup: SessionLookup) -> SessionActivityReading?
 }

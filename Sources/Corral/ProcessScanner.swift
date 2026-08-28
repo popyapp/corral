@@ -257,6 +257,63 @@ enum ProcessScanner {
         return args
     }
 
+    // ─ One environment variable, by name ────────────────────────────────────
+
+    /// The value of a single environment variable of another process.
+    ///
+    /// The warning on `arguments(of:)` is the whole reason this has the shape
+    /// it does. The environment sits in the same buffer, and an environment
+    /// routinely holds API keys, session tokens and passwords — so this never
+    /// returns one. It answers a question about one name the caller wrote down
+    /// by hand, and every other entry is compared as bytes and discarded
+    /// without ever becoming a String.
+    static func environmentValue(_ name: String, of pid: pid_t) -> String? {
+        let argmax = Self.argmax
+        guard argmax > 0 else { return nil }
+
+        var buffer = [CChar](repeating: 0, count: Int(argmax))
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = Int(argmax)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0,
+              size > MemoryLayout<Int32>.size
+        else { return nil }
+
+        var argc: Int32 = 0
+        memcpy(&argc, buffer, MemoryLayout<Int32>.size)
+
+        var index = MemoryLayout<Int32>.size
+        while index < size, buffer[index] != 0 { index += 1 }   // exec path
+        while index < size, buffer[index] == 0 { index += 1 }   // padding
+
+        // Step over the arguments. The environment begins after them.
+        var stepped: Int32 = 0
+        while index < size, stepped < argc {
+            if buffer[index] == 0 { stepped += 1 }
+            index += 1
+        }
+
+        let needle = Array("\(name)=".utf8).map { CChar(bitPattern: $0) }
+        while index < size {
+            let start = index
+            while index < size, buffer[index] != 0 { index += 1 }
+            let end = index
+            index += 1
+
+            guard end - start > needle.count else { continue }
+            var matches = true
+            for offset in 0..<needle.count where buffer[start + offset] != needle[offset] {
+                matches = false
+                break
+            }
+            guard matches else { continue }
+
+            var value = Array(buffer[(start + needle.count)..<end])
+            value.append(0)
+            return String(cString: value)
+        }
+        return nil
+    }
+
     // ─ Working directory ────────────────────────────────────────────────────
 
     /// The process's cwd. This is what turns an anonymous `2.1.235` into
