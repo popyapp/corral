@@ -131,6 +131,25 @@ final class LiveProcessTests: XCTestCase {
         )
     }
 
+    /// Find a spawned process in the inventory — as a group root, or as a child.
+    ///
+    /// Which of the two it turns out to be depends on where the suite itself is
+    /// running. Launch the tests from inside an agent's shell, an increasingly
+    /// ordinary thing to do, and the process we just spawned is that agent's
+    /// descendant, so AgentInventory lists it under that agent's group instead
+    /// of giving it one of its own. That is deliberate — an agent you started
+    /// from another agent's shell keeps its identity but stays in the tree it
+    /// belongs to — so asserting on `groups.first { $0.root.pid == pid }` was
+    /// testing the terminal the suite happened to run in, not the inventory.
+    private func locate(
+        pid: pid_t, in inventory: AgentInventory
+    ) -> (group: AgentGroup, process: AgentProcess)? {
+        for group in inventory.groups {
+            if let hit = group.all.first(where: { $0.pid == pid }) { return (group, hit) }
+        }
+        return nil
+    }
+
     func testCodexAppearsInTheInventoryUnderItsProjectName() throws {
         let project = temporaryDirectory.appendingPathComponent("checkout-service")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -139,12 +158,12 @@ final class LiveProcessTests: XCTestCase {
         let inventory = AgentInventory()
         inventory.refresh()
 
-        let group = try XCTUnwrap(
-            inventory.groups.first { $0.root.pid == process.processIdentifier },
-            "Codex should show up as an agent in the inventory"
+        let found = try XCTUnwrap(
+            locate(pid: process.processIdentifier, in: inventory),
+            "Codex should show up in the inventory"
         )
-        XCTAssertEqual(group.root.tool, .codex)
-        XCTAssertEqual(group.root.projectName, "checkout-service")
+        XCTAssertEqual(found.process.tool, .codex)
+        XCTAssertEqual(found.process.projectName, "checkout-service")
     }
 
     // ─ Cursor ───────────────────────────────────────────────────────────────
@@ -178,8 +197,13 @@ final class LiveProcessTests: XCTestCase {
 
         let inventory = AgentInventory()
         inventory.refresh()
-        let group = try XCTUnwrap(inventory.groups.first { $0.root.pid == pid })
+        let found = try XCTUnwrap(locate(pid: pid, in: inventory))
 
+        // Stop exactly what this test spawned, and nothing else. When the suite
+        // runs inside an agent's shell the spawned process is listed under that
+        // agent's group, and handing that whole group to Terminator would take
+        // the agent running the tests down with it.
+        let group = AgentGroup(root: found.process, children: [])
         let outcome = Terminator.stop(group, method: .graceful, gracePeriod: 3)
         XCTAssertTrue(outcome.stopped.contains(pid), "the agent should have stopped")
         XCTAssertTrue(outcome.survived.isEmpty)
