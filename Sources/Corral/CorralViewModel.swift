@@ -115,6 +115,11 @@ final class CorralViewModel: ObservableObject {
     /// What a row should show. Always prefer this over `activity(for:)`: the
     /// root process alone cannot tell a parked agent from one waiting on the
     /// build it started.
+    /// What the agent last said or did, from the session log the tool keeps.
+    func sessionActivity(for group: AgentGroup) -> SessionActivity? {
+        inventory.sessionActivity(for: group)
+    }
+
     func groupActivity(for group: AgentGroup) -> GroupActivity {
         inventory.groupActivity(for: group)
     }

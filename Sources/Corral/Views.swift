@@ -628,6 +628,25 @@ private struct AgentRow: View {
                         .lineLimit(1)
                         .truncationMode(.head)
                 }
+
+                // The last thing the agent said or did, from the log the tool
+                // writes for itself. Only some tools keep one, so the row has
+                // to read correctly without this line as well as with it.
+                if let note = model.sessionActivity(for: group) {
+                    HStack(spacing: 5) {
+                        Text(note.fromSubagent ? "SUBAGENT" : "LAST")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(Theme.faint.opacity(0.7))
+                        Text(note.summary)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.faint)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Text(Date().timeIntervalSince(note.at).durationString)
+                            .font(.system(size: 9))
+                            .foregroundStyle(Theme.faint.opacity(0.7))
+                    }
+                }
             }
 
             Spacer(minLength: 8)

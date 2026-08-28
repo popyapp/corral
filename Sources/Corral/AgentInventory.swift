@@ -30,6 +30,11 @@ final class AgentInventory {
     /// dozen string searches over the path of all ~550 processes.
     private var identityCache: [pid_t: (startTime: time_t, match: ToolCatalog.Match?)] = [:]
 
+    /// Reads each tool's own session log. Kept here rather than on AgentGroup
+    /// so a group stays a plain description of processes: whether Corral can
+    /// also say what the agent is *doing* depends on the tool, not the process.
+    private let sessionActivities = SessionActivityStore()
+
     private(set) var groups: [AgentGroup] = []
     private(set) var activity: [pid_t: Activity] = [:]
     private(set) var lastRefresh: Date?
@@ -162,6 +167,9 @@ final class AgentInventory {
         }
 
         updateActivity(for: built, at: now)
+        sessionActivities.forget(
+            keeping: Set(built.compactMap { $0.root.workingDirectory })
+        )
         groups = built.sorted {
             // Longest-running first: the thing you forgot about is the thing
             // you came here to find.
@@ -306,6 +314,17 @@ final class AgentInventory {
     /// while `swift build` or a test run is burning a core, the agent that
     /// started it is parked on a read and has written nothing. The child is the
     /// evidence.
+    /// The last thing this agent said or did, according to the log the tool
+    /// keeps for itself. Nil when the tool writes no log Corral can read, or
+    /// when the session has not said anything yet.
+    func sessionActivity(for group: AgentGroup) -> SessionActivity? {
+        sessionActivities.activity(
+            for: group.root.tool,
+            inProject: group.root.workingDirectory,
+            startedAt: group.root.startedAt
+        )
+    }
+
     func groupActivity(for group: AgentGroup) -> GroupActivity {
         let root = activity(for: group.root.pid)
         let busiest = group.children

@@ -194,6 +194,12 @@ enum CLI {
             if let tty = root.tty {
                 print("    tty       \(tty)")
             }
+            if let note = inventory.sessionActivity(for: group) {
+                let age = Date().timeIntervalSince(note.at)
+                print("    doing     \(note.summary)"
+                    + (note.fromSubagent ? "  (subagent)" : "")
+                    + "  ·  \(age.durationString) ago")
+            }
             if !group.children.isEmpty {
                 let summary = group.children
                     .map { "\($0.comm) (\($0.role.label), pid \($0.pid))" }
