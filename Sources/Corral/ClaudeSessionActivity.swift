@@ -155,14 +155,28 @@ struct ClaudeSessionActivityReader: SessionActivityReader {
 }
 
 extension SessionActivity {
-    /// The first line of a message, capped. An agent's reply can be a page
-    /// long; the list has room for a sentence.
+    /// The first line of a message worth reading, as plain text, capped.
+    ///
+    /// An agent's reply can be a page long and is written in Markdown, so the
+    /// first *line* is not always the first thing it says — a reply can open
+    /// with a heading, a bullet or a whole code block. Code blocks are skipped
+    /// entirely: a row saying `let x = 1` describes nothing. The syntax comes
+    /// off what is left before the cap, so a message is never truncated in the
+    /// middle of a delimiter.
     static func firstLine(_ text: String, limit: Int = 120) -> String? {
-        let line = text
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .first?
-            .trimmingCharacters(in: .whitespaces)
-        guard let line, !line.isEmpty else { return nil }
-        return line.count <= limit ? line : String(line.prefix(limit - 1)) + "…"
+        var insideFence = false
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = String(raw)
+            if MarkdownText.isFence(line) {
+                insideFence.toggle()
+                continue
+            }
+            guard !insideFence else { continue }
+            guard !MarkdownText.isStructural(line) else { continue }
+            let plain = MarkdownText.plain(line)
+            guard !plain.isEmpty else { continue }
+            return plain.count <= limit ? plain : String(plain.prefix(limit - 1)) + "…"
+        }
+        return nil
     }
 }
