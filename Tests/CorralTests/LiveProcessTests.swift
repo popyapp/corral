@@ -235,4 +235,40 @@ final class LiveProcessTests: XCTestCase {
         XCTAssertGreaterThan(raw.residentBytes, 0)
         XCTAssertLessThan(raw.startedAt, Date())
     }
+
+    /// The two scans must date a process identically.
+    ///
+    /// They arrive by different routes: the lightweight pass reads
+    /// `p_starttime` straight out of the kernel table, the full scan builds a
+    /// `Date` for the row. Any drift between them means the full scan has gone
+    /// back to *deriving* the answer from a clock instead of reading it, which
+    /// is not a hypothetical failure — it derived it from `mach_absolute_time`,
+    /// which stops while the Mac is asleep, and every agent came out younger
+    /// than it was by however long the machine had slept. Agents launched five
+    /// days earlier were dated to two days ago.
+    ///
+    /// That is worth a test of its own because of what it broke downstream. A
+    /// process's start time is what rules out session logs older than the
+    /// process that would be reading them, so a slow clock did not show up as a
+    /// wrong date — it showed up as one agent's transcript being read out under
+    /// another agent's name.
+    func testBothScansDateAProcessIdentically() {
+        let fromKernel = Dictionary(
+            ProcessScanner.scanLightweight().map { ($0.pid, $0.startTime) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        var compared = 0
+        for raw in ProcessScanner.scan() {
+            guard let expected = fromKernel[raw.pid] else { continue }
+            XCTAssertEqual(
+                raw.startedAt.timeIntervalSince1970,
+                Double(expected),
+                accuracy: 1,
+                "pid \(raw.pid) (\(raw.comm)) is dated differently by the two scans"
+            )
+            compared += 1
+        }
+        XCTAssertGreaterThan(compared, 0, "no process was visible to both scans")
+    }
 }

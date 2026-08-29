@@ -139,7 +139,7 @@ enum ProcessScanner {
             workingDirectory: workingDirectory(of: light.pid),
             residentBytes: usage.resident,
             cpuSeconds: usage.cpuSeconds,
-            startedAt: usage.startedAt,
+            startedAt: Date(timeIntervalSince1970: Double(light.startTime)),
             tty: light.tty,
             lastTerminalActivity: light.tty.flatMap(lastWrite(toTerminal:))
         )
@@ -166,7 +166,7 @@ enum ProcessScanner {
                     workingDirectory: workingDirectory(of: pid),
                     residentBytes: usage.resident,
                     cpuSeconds: usage.cpuSeconds,
-                    startedAt: usage.startedAt,
+                    startedAt: startTime(of: kp),
                     tty: tty,
                     lastTerminalActivity: tty.flatMap(lastWrite(toTerminal:))
                 )
@@ -367,14 +367,7 @@ enum ProcessScanner {
     struct Usage {
         let resident: UInt64
         let cpuSeconds: Double
-        let startedAt: Date
     }
-
-    private static let timebase: Double = {
-        var info = mach_timebase_info_data_t()
-        mach_timebase_info(&info)
-        return Double(info.numer) / Double(info.denom)
-    }()
 
     static func usage(of pid: pid_t) -> Usage? {
         var info = rusage_info_v4()
@@ -385,20 +378,32 @@ enum ProcessScanner {
         }
         guard result == 0 else { return nil }
 
-        // ri_proc_start_abstime shares a clock with mach_absolute_time(), so
-        // the difference is wall-clock age — and unlike a stored boot-relative
-        // timestamp it survives the machine sleeping.
-        let now = mach_absolute_time()
-        let ageNanos = now > info.ri_proc_start_abstime
-            ? Double(now - info.ri_proc_start_abstime) * timebase
-            : 0
         let cpuNanos = Double(info.ri_user_time &+ info.ri_system_time)
+        return Usage(resident: info.ri_resident_size, cpuSeconds: cpuNanos / 1e9)
+    }
 
-        return Usage(
-            resident: info.ri_resident_size,
-            cpuSeconds: cpuNanos / 1e9,
-            startedAt: Date(timeIntervalSinceNow: -ageNanos / 1e9)
-        )
+    /// When a process actually started, in wall-clock time.
+    ///
+    /// From `p_starttime` in the kernel process table, which is a real
+    /// `timeval` — the same field `ps` prints and the only one that means the
+    /// same thing after the Mac has been asleep.
+    ///
+    /// This used to be derived from `ri_proc_start_abstime` against
+    /// `mach_absolute_time()`, on the belief that the pair survives sleep. It
+    /// is the other way round: that clock stops while the machine is suspended,
+    /// so every process was reported younger than it was by however long the
+    /// Mac had slept since it started. On the machine this was found on, agents
+    /// launched five days earlier were dated to two days ago — and because an
+    /// agent's start time is what rules out session logs older than the process
+    /// that would be reading them, a correct transcript was being rejected and
+    /// a *different* session's transcript accepted in its place. A clock that
+    /// runs slow does not fail quietly here; it fails by attributing one
+    /// conversation to another agent.
+    ///
+    /// Truncating to the second is deliberate and safe: it can only move the
+    /// answer earlier, which is the permissive direction for that comparison.
+    static func startTime(of kp: kinfo_proc) -> Date {
+        Date(timeIntervalSince1970: Double(kp.kp_proc.p_starttime.tv_sec))
     }
 
     /// Whether a pid is still alive — `kill(pid, 0)` signals nothing, it only
