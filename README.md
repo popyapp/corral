@@ -129,6 +129,45 @@ Two honest limits:
   "quiet since Corral opened" rather than "idle", and why they are never
   bulk-stopped. `corral list` makes the same distinction in text.
 
+## Usage
+
+How much have you got left, and how full is each conversation. Two different
+questions: an allowance belongs to the account and refills on a clock, a context
+window belongs to one conversation and is the only one of the two you can do
+something about right now.
+
+They show in three places — a line on the right edge of the screen that opens
+into a ring per vendor when you go near it, a **Usage** tab in the window, and
+the fullness of each conversation in its own row of the agent list.
+
+Where the figures come from differs by tool, and Corral says so rather than
+leaving a gap:
+
+| | Allowance | Context |
+|---|---|---|
+| **Codex** | from its own rollout logs, unasked | yes |
+| **Claude Code** | needs the status line, below | yes |
+| **Cursor** | not published anywhere on your Mac | needs the status line |
+
+Codex writes its limits into every session log it keeps, so those are free. The
+other two record nothing — but both hand their figures to a status line command
+on every update, and Corral can be that command. Turn it on from the menu bar
+item, **Report Usage to Corral**, or from the Usage tab. It asks first, shows
+the exact setting it will add to `~/.claude/settings.json` or
+`~/.cursor/cli-config.json`, keeps a timestamped copy of the file, and refuses
+to touch a status line you already set up.
+
+What Corral keeps out of what those tools send is the session id, the working
+directory, the context size and any limit percentages. Not the transcript path,
+not the branch, not the pull request — the payload describes what you are
+working on, and none of that is any of its business.
+
+Every figure carries the date the tool wrote it. They are a by-product of the
+last turn an agent took, so a tool you have not run this week reports a
+week-old percentage, and one shown bare would read as current.
+
+Still no network. These are files the tools put on your machine.
+
 ## What it costs to run
 
 A monitor that shows you what is eating your CPU has no business being on that
