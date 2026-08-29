@@ -2,10 +2,25 @@ import AppKit
 import SwiftUI
 
 enum Pane: String, CaseIterable, Identifiable {
-    case agents, disk
+    case agents, usage, disk
+
     var id: String { rawValue }
-    var title: String { self == .agents ? "Agents" : "On disk" }
-    var symbol: String { self == .agents ? "cpu" : "internaldrive" }
+
+    var title: String {
+        switch self {
+        case .agents: return "Agents"
+        case .usage: return "Usage"
+        case .disk: return "On disk"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .agents: return "cpu"
+        case .usage: return "gauge.with.needle"
+        case .disk: return "internaldrive"
+        }
+    }
 }
 
 /// The window: the two things you came for — what is running right now, and
@@ -26,11 +41,12 @@ struct RootView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 260)
+                .frame(maxWidth: 340)
                 .padding(.top, 11)
 
                 switch pane {
                 case .agents: ContentView()
+                case .usage: UsagePane()
                 case .disk: DiskView()
                 }
             }
@@ -651,6 +667,7 @@ private struct AgentRow: View {
 
             Spacer(minLength: 8)
 
+            contextMetric
             metric(group.totalResidentBytes.byteString, "memory")
             metric(group.root.uptime.durationString, "up")
             stateBadge
@@ -697,6 +714,49 @@ private struct AgentRow: View {
         guard count > 0 else { return "Stop this agent" }
         return "Stop this agent and the \(count) process\(count == 1 ? "" : "es") "
             + "it started"
+    }
+
+    /// How full this agent's conversation is, in the row itself.
+    ///
+    /// The Usage tab lists the same numbers together, which answers "where am I
+    /// across everything". This answers the other question, the one you have
+    /// while looking at one agent: is *this* the one that is about to need
+    /// compacting. Coloured rather than plain, because at a glance the colour is
+    /// the whole message and the number is the detail.
+    ///
+    /// Absent for tools that do not record it, and for an agent whose log could
+    /// not be told from its neighbour's. A row reads correctly without it.
+    @ViewBuilder
+    private var contextMetric: some View {
+        if let use = model.sessionContext(for: group) {
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(String(format: "%.0f%%", (use.fraction * 100).rounded()))
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Meter.tint(for: use.fraction))
+                Meter(
+                    fraction: use.fraction,
+                    tint: Meter.tint(for: use.fraction),
+                    height: 3,
+                    track: Color.primary.opacity(0.09)
+                )
+                .frame(width: 44)
+                Text("CONTEXT")
+                    .font(.system(size: 8, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(Theme.faint)
+            }
+            .frame(minWidth: 52, alignment: .trailing)
+            .help(contextDetail(use))
+        }
+    }
+
+    private func contextDetail(_ use: ContextUse) -> String {
+        let tokens = "\(use.usedTokens) of \(use.windowTokens) tokens"
+        return use.windowIsCertain
+            ? "\(tokens), as the session reported it"
+            : "\(tokens). The window size was taken from your configured model, "
+                + "not from the session."
     }
 
     private func metric(_ value: String, _ label: String) -> some View {

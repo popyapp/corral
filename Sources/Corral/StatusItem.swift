@@ -42,6 +42,15 @@ final class StatusItemController {
         updateButton()
     }
 
+    /// Take the item out of the menu bar.
+    ///
+    /// Releasing the controller is not enough — `NSStatusBar` holds its own
+    /// reference, and an item nobody owns any more stays on screen until the
+    /// app quits.
+    func removeFromStatusBar() {
+        NSStatusBar.system.removeStatusItem(item)
+    }
+
     // ─ The button ───────────────────────────────────────────────────────────
 
     private func updateButton() {
@@ -171,6 +180,63 @@ final class StatusItemController {
         open.target = MenuBuilder.shared
         menu.addItem(open)
 
+        let usage = NSMenuItem(
+            title: "Show Usage",
+            action: #selector(MenuBuilder.showUsage),
+            keyEquivalent: ""
+        )
+        usage.target = MenuBuilder.shared
+        menu.addItem(usage)
+
+        let reporting = NSMenuItem(title: "Report Usage to Corral", action: nil, keyEquivalent: "")
+        let reportingMenu = NSMenu()
+        for agent in StatusLineSetup.Target.all {
+            let entry = NSMenuItem(
+                title: agent.name,
+                action: #selector(MenuBuilder.setUpUsage(_:)),
+                keyEquivalent: ""
+            )
+            entry.target = MenuBuilder.shared
+            entry.representedObject = agent.tool.rawValue
+            if case .installed = StatusLineSetup.state(of: agent) { entry.state = .on }
+            reportingMenu.addItem(entry)
+        }
+        reporting.submenu = reportingMenu
+        menu.addItem(reporting)
+
+        let placement = NSMenuItem(title: "Usage Panel", action: nil, keyEquivalent: "")
+        let placementMenu = NSMenu()
+        for option in PanelPlacement.allCases {
+            let entry = NSMenuItem(
+                title: option.label,
+                action: #selector(MenuBuilder.setPlacement(_:)),
+                keyEquivalent: ""
+            )
+            entry.target = MenuBuilder.shared
+            entry.representedObject = option.rawValue
+            entry.state = PanelSettings.shared.placement == option ? .on : .off
+            // Turning the panel off is only on offer while the menu bar item is
+            // there to turn it back on with.
+            entry.isEnabled = option != .off || PanelSettings.shared.showsMenuBarItem
+            placementMenu.addItem(entry)
+        }
+        placement.submenu = placementMenu
+        menu.addItem(placement)
+
+        let hideItem = NSMenuItem(
+            title: "Hide This Menu Bar Item",
+            action: #selector(MenuBuilder.hideMenuBarItem),
+            keyEquivalent: ""
+        )
+        hideItem.target = MenuBuilder.shared
+        // Offered only when there is another way back in. Turning off the last
+        // one leaves an app that is running and cannot be summoned.
+        hideItem.isEnabled = PanelSettings.shared.placement != .off
+        hideItem.toolTip = PanelSettings.shared.placement != .off
+            ? "The usage panel stays, so Corral is still reachable."
+            : "Turn on the usage panel first — otherwise there is no way back."
+        menu.addItem(hideItem)
+
         let appearance = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
         let appearanceMenu = NSMenu()
         for mode in AppearanceMode.allCases {
@@ -274,5 +340,31 @@ final class MenuBuilder: NSObject, NSMenuDelegate {
         guard let raw = sender.representedObject as? String,
               let mode = AppearanceMode(rawValue: raw) else { return }
         MainActor.assumeIsolated { AppearanceController.shared.mode = mode }
+    }
+
+    @objc func showUsage() {
+        MainActor.assumeIsolated { EdgePanelController.shared.reveal() }
+    }
+
+    @objc func setUpUsage(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let tool = Tool(rawValue: raw),
+              let target = StatusLineSetup.Target.of(tool)
+        else { return }
+        MainActor.assumeIsolated { StatusLineSetup.offer(target) }
+    }
+
+    @objc func setPlacement(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let placement = PanelPlacement(rawValue: raw) else { return }
+        MainActor.assumeIsolated { PanelSettings.shared.placement = placement }
+    }
+
+    @objc func hideMenuBarItem() {
+        MainActor.assumeIsolated {
+            let settings = PanelSettings.shared
+            guard !settings.wouldStrandTheApp(turningOffMenuBar: true) else { return }
+            settings.showsMenuBarItem = false
+        }
     }
 }

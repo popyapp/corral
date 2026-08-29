@@ -1,10 +1,18 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @main
 enum Entry {
     static func main() {
         let args = CommandLine.arguments
+        // First, and with no side effects: Claude Code runs this on every
+        // status update, so it has to start and finish without touching the
+        // process table or drawing anything.
+        if args.contains("--statusline") {
+            StatusLine.run(tool: StatusLine.tool(from: args))
+            return
+        }
         if args.contains("--version") {
             print("Corral \(BuildInfo.display)")
             return
@@ -36,6 +44,8 @@ enum Entry {
               Corral --disk        print what the tools have left on disk
               Corral --list --json machine-readable output
               Corral --version     print version
+              Corral --statusline <claude|cursor>
+                                   status line for that agent; see the menu
             """)
             return
         }
@@ -46,6 +56,7 @@ enum Entry {
 struct CorralApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @ObservedObject private var appearance = AppearanceController.shared
+    @ObservedObject private var panels = PanelSettings.shared
 
     var body: some Scene {
         WindowGroup("Corral") {
@@ -61,6 +72,27 @@ struct CorralApp: App {
             // items would be worse than one incomplete one.
             CommandGroup(replacing: .appInfo) {
                 Button("About Corral") { AboutPanel.show() }
+                Divider()
+                // Also on the menu bar item's menu. Somebody who turned that
+                // off still has to be able to find this.
+                Menu("Report Usage to Corral") {
+                    ForEach(StatusLineSetup.Target.all, id: \.tool) { agent in
+                        Button(agent.name) { StatusLineSetup.offer(agent) }
+                    }
+                }
+                Picker("Usage Panel", selection: $panels.placement) {
+                    ForEach(PanelPlacement.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                // The one place the menu bar item can be turned back *on*, so
+                // it is never conditional — only turning it off is, and only
+                // when it is the last way back into the app.
+                Toggle("Menu Bar Item", isOn: $panels.showsMenuBarItem)
+                    .disabled(
+                        panels.showsMenuBarItem
+                            && panels.wouldStrandTheApp(turningOffMenuBar: true)
+                    )
                 Divider()
                 Picker("Appearance", selection: $appearance.mode) {
                     ForEach(AppearanceMode.allCases) { mode in
@@ -87,6 +119,7 @@ final class AppState {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController?
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -95,7 +128,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Before the first window is drawn, so a dark-mode launch never
             // flashes light.
             AppearanceController.shared.apply()
-            statusItem = StatusItemController(model: AppState.shared.agents)
+
+            // The menu bar item is now optional, so it is created and destroyed
+            // from the setting rather than owned outright.
+            PanelSettings.shared.$showsMenuBarItem
+                .removeDuplicates()
+                .sink { [weak self] shows in
+                    MainActor.assumeIsolated {
+                        if shows {
+                            guard self?.statusItem == nil else { return }
+                            self?.statusItem = StatusItemController(
+                                model: AppState.shared.agents
+                            )
+                        } else {
+                            self?.statusItem?.removeFromStatusBar()
+                            self?.statusItem = nil
+                        }
+                    }
+                }
+                .store(in: &cancellables)
+
+            EdgePanelController.shared.apply(model: AppState.shared.agents)
         }
     }
 
