@@ -86,6 +86,20 @@ struct SessionActivityReading {
     let activity: SessionActivity
     /// Identifies the log this came out of, so it is not used twice.
     let source: String
+
+    /// How full the session's context window is, when the same log said.
+    ///
+    /// Carried here rather than behind a protocol of its own because it is
+    /// written in the very records this reader is already walking. Splitting it
+    /// out would mean a second reader opening the same file to read the same
+    /// 256 KB again, for the sake of keeping two words apart.
+    let context: ContextUse?
+
+    init(activity: SessionActivity, source: String, context: ContextUse? = nil) {
+        self.activity = activity
+        self.source = source
+        self.context = context
+    }
 }
 
 protocol SessionActivityReader {

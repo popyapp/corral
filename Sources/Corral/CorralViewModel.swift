@@ -120,6 +120,101 @@ final class CorralViewModel: ObservableObject {
         inventory.sessionActivity(for: group)
     }
 
+    /// How full this agent's conversation is.
+    func sessionContext(for group: AgentGroup) -> ContextUse? {
+        inventory.sessionContext(for: group)
+    }
+
+    /// What each account has left, as of the last time that tool wrote it down.
+    var accountUsages: [ToolUsage] { inventory.accountUsages }
+
+    /// Everything Corral knows about one vendor, gathered for the rail.
+    ///
+    /// Grouped by vendor rather than by tool because the account is the vendor's:
+    /// Claude Code and the Claude desktop app spend the same allowance, and two
+    /// rings for one budget would be two rings saying the same number.
+    var vendorUsages: [VendorUsage] {
+        let accounts = Dictionary(
+            accountUsages.map { ($0.tool.vendor, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var sessions: [String: [(group: AgentGroup, use: ContextUse)]] = [:]
+        for row in contexts {
+            sessions[row.group.root.tool.vendor, default: []].append(row)
+        }
+
+        // Every vendor that is either running something or has an allowance we
+        // can read. A vendor doing neither has nothing to put in a ring.
+        var order: [String] = []
+        var representative: [String: Tool] = [:]
+        for group in groups {
+            let vendor = group.root.tool.vendor
+            if representative[vendor] == nil {
+                representative[vendor] = group.root.tool
+                order.append(vendor)
+            }
+        }
+        for usage in accountUsages where representative[usage.tool.vendor] == nil {
+            representative[usage.tool.vendor] = usage.tool
+            order.append(usage.tool.vendor)
+        }
+
+        return order.compactMap { vendor in
+            guard let tool = representative[vendor] else { return nil }
+            let usage = VendorUsage(
+                tool: tool,
+                account: accounts[vendor],
+                sessions: sessions[vendor] ?? []
+            )
+            // A vendor with neither a limit nor a measurable conversation would
+            // be an empty ring, which reads as "nothing used" rather than
+            // "nothing known".
+            return usage.hasSomethingToShow ? usage : nil
+        }
+    }
+
+    /// The single fullest thing Corral is tracking, whatever kind it is.
+    ///
+    /// The collapsed panel shows one line, and this is it. Allowances and
+    /// context windows are compared against each other on purpose: they are
+    /// different problems, but "what is closest to running out" has one answer
+    /// and it is the only thing worth a permanent strip on someone's screen.
+    /// Which of the two it turned out to be is what opening the panel is for.
+    var fullest: (fraction: Double, label: String, tool: Tool)? {
+        var best: (fraction: Double, label: String, tool: Tool)?
+
+        func offer(_ fraction: Double, _ label: String, _ tool: Tool) {
+            guard best == nil || fraction > best!.fraction else { return }
+            best = (fraction, label, tool)
+        }
+
+        for usage in accountUsages {
+            for limit in usage.limits {
+                offer(limit.usedFraction, "\(usage.tool.displayName) \(limit.label)", usage.tool)
+            }
+        }
+        for row in contexts {
+            offer(
+                row.use.fraction,
+                row.group.root.projectName ?? row.group.root.tool.displayName,
+                row.group.root.tool
+            )
+        }
+        return best
+    }
+
+    /// Agents whose context we can report, fullest first.
+    ///
+    /// Fullest first because that is the one about to need something done about
+    /// it, and because a panel you glance at should put the answer at the top.
+    var contexts: [(group: AgentGroup, use: ContextUse)] {
+        groups
+            .compactMap { group in
+                sessionContext(for: group).map { (group: group, use: $0) }
+            }
+            .sorted { $0.use.fraction > $1.use.fraction }
+    }
+
     func groupActivity(for group: AgentGroup) -> GroupActivity {
         inventory.groupActivity(for: group)
     }

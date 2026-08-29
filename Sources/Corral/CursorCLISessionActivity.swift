@@ -22,6 +22,13 @@ import Foundation
 struct CursorCLISessionActivityReader: SessionActivityReader {
 
     private let root: URL
+    /// What the session reported about itself, when the status line is on.
+    ///
+    /// This is the only way to know how full a Cursor conversation is. The
+    /// tokens are not in `meta.json` and the store they *are* in is ordered by
+    /// the encrypted index described above — so without this there is no number
+    /// to show, and with it there is an exact one.
+    private let status = StatusSnapshotReader(tool: .cursorAgent)
 
     init(root: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".cursor/chats")) {
@@ -49,11 +56,14 @@ struct CursorCLISessionActivityReader: SessionActivityReader {
             else { continue }
 
             let summary = meta.title ?? Self.latestPrompt(in: session) ?? "Working"
+            // The directory is named after the session, which is the same id
+            // the status line reports under.
             let reading = SessionActivityReading(
                 activity: SessionActivity(
                     summary: summary, at: meta.updatedAt, fromSubagent: false
                 ),
-                source: session.path
+                source: session.path,
+                context: status.context(for: session.lastPathComponent)
             )
             if best == nil || reading.activity.at > best!.activity.at { best = reading }
         }

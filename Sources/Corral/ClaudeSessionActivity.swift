@@ -9,6 +9,8 @@ import Foundation
 struct ClaudeSessionActivityReader: SessionActivityReader {
 
     private let root: URL
+    /// What the session reported about itself, when the status line is on.
+    private let status = StatusSnapshotReader(tool: .claudeCode)
 
     init(root: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude/projects")) {
@@ -28,7 +30,18 @@ struct ClaudeSessionActivityReader: SessionActivityReader {
     func reading(_ lookup: SessionLookup) -> SessionActivityReading? {
         for file in transcripts(for: lookup) where !lookup.claimed.contains(file.path) {
             if let hit = scan(file, expecting: lookup.project, startedAt: lookup.startedAt) {
-                return SessionActivityReading(activity: hit, source: file.path)
+                // A session that reported its own window beats one worked out
+                // from the transcript: it *states* the size instead of leaving
+                // it to be proved. The transcript stays as the fallback for
+                // every session the status line has not reached.
+                let stated = status.context(
+                    for: file.deletingPathExtension().lastPathComponent
+                )
+                return SessionActivityReading(
+                    activity: hit.activity,
+                    source: file.path,
+                    context: stated ?? hit.context
+                )
             }
         }
         return nil
@@ -73,14 +86,48 @@ struct ClaudeSessionActivityReader: SessionActivityReader {
     }
 
     /// Walk a transcript backwards and report the newest entry that says
-    /// something. Entries the session wrote about itself — mode changes, title
-    /// updates, file snapshots — are not activity and are skipped.
-    private func scan(_ file: URL, expecting cwd: String, startedAt: Date) -> SessionActivity? {
+    /// something, together with how full the window was when it was written.
+    /// Entries the session wrote about itself — mode changes, title updates,
+    /// file snapshots — are not activity and are skipped.
+    ///
+    /// One pass, two answers, and they stop at different points. The activity
+    /// line is settled by the first entry that yields one. The window's *size*
+    /// is settled by the largest turn anywhere in reach, which is usually the
+    /// newest one — but not for a session that has just compacted, where the
+    /// big turns are behind it.
+    private func scan(_ file: URL, expecting cwd: String, startedAt: Date)
+        -> (activity: SessionActivity, context: ContextUse?)?
+    {
+        var found: SessionActivity?
+        var currentTokens: Int?
+        var observedMax = 0
+        var examinedAfterFound = 0
+
         for line in FileTail.lines(of: file) {
             guard let data = line.data(using: .utf8),
                   let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   record["type"] as? String == "assistant"
             else { continue }
+
+            let isSubagent = record["isSidechain"] as? Bool ?? false
+
+            // A subagent runs its own conversation in its own window, so its
+            // token count is a true number about the wrong thing.
+            if !isSubagent, let tokens = ClaudeContext.tokens(in: record) {
+                if currentTokens == nil { currentTokens = tokens }
+                observedMax = max(observedMax, tokens)
+            }
+
+            if found != nil {
+                // A turn past 200K proves the larger window; nothing older can
+                // add to that. Short of proof, keep reading a little further —
+                // bounded, because "a little further" in a 23 MB transcript has
+                // to mean a number.
+                if observedMax > ClaudeContext.standardWindow { break }
+                examinedAfterFound += 1
+                if examinedAfterFound >= 40 { break }
+                continue
+            }
 
             // The folder name is a lossy guess, so the recorded path is worth
             // checking — but only for a different *project*. An entry written
@@ -101,13 +148,24 @@ struct ClaudeSessionActivityReader: SessionActivityReader {
             // file, so its *last* entry is recent even when its first is not.
             guard at >= startedAt else { return nil }
 
-            return SessionActivity(
-                summary: summary,
-                at: at,
-                fromSubagent: record["isSidechain"] as? Bool ?? false
-            )
+            found = SessionActivity(summary: summary, at: at, fromSubagent: isSubagent)
         }
-        return nil
+
+        guard let found else { return nil }
+        return (found, Self.context(current: currentTokens, observedMax: observedMax))
+    }
+
+    static func context(current: Int?, observedMax: Int) -> ContextUse? {
+        guard let current else { return nil }
+        let window = ClaudeContext.window(
+            observedMax: observedMax,
+            configuredModel: { ClaudeContext.configuredModel() }
+        )
+        return ContextUse(
+            usedTokens: current,
+            windowTokens: window.tokens,
+            windowIsCertain: window.certain
+        )
     }
 
     /// What a single assistant turn amounts to, in one line.

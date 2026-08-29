@@ -35,6 +35,13 @@ final class AgentInventory {
     /// also say what the agent is *doing* depends on the tool, not the process.
     private let sessionActivities = SessionActivityStore()
 
+    /// Each tool's account-level allowance, on its own slower clock.
+    private let usages = UsageStore()
+
+    /// Claude Code's own pid-to-session index, which beats reading the id out
+    /// of a child's environment on every count that matters.
+    private let claudeSessions = ClaudeSessionRegistry()
+
     /// Claude Code's session id, cached per process: it is fixed for the life
     /// of the agent and reading it costs a sysctl over a megabyte buffer.
     private var sessionIdCache: [pid_t: String?] = [:]
@@ -173,6 +180,7 @@ final class AgentInventory {
         updateActivity(for: built, at: now)
         sessionIdCache = sessionIdCache.filter { liveProcesses.contains($0.key) }
         sessionActivities.refresh(built, sessionId: sessionId(for:), now: now)
+        usages.refresh(now: now)
         groups = built.sorted {
             // Longest-running first: the thing you forgot about is the thing
             // you came here to find.
@@ -324,14 +332,38 @@ final class AgentInventory {
         sessionActivities.activity(for: group.root.pid)
     }
 
-    /// The session id Claude Code was launched with.
+    /// How full this agent's conversation is. Nil for a tool that does not
+    /// record it, and for an agent whose log could not be told from another's.
+    func sessionContext(for group: AgentGroup) -> ContextUse? {
+        sessionActivities.context(for: group.root.pid)
+    }
+
+    /// What the account behind a tool has left, as of the last time that tool
+    /// wrote it down. Never a live reading — see `ToolUsage.observedAt`.
+    func accountUsage(for tool: Tool) -> ToolUsage? { usages.usage(for: tool) }
+
+    var accountUsages: [ToolUsage] { usages.all }
+
+    /// Which session this Claude Code process is running.
     ///
-    /// It is not on the agent process. Claude Code exports it *for* the things
-    /// it launches, so it is read off a child — any of them, they all inherit
-    /// the same value. Only this one variable is ever read; see
+    /// Two answers, in order of how directly they were asked. Claude Code keys
+    /// a file by pid, which says outright what the environment variable only
+    /// implies; the variable stays as the fallback for versions that write no
+    /// such file, and it is read off a child because that is where the agent
+    /// exports it. Only that one variable is ever read; see
     /// `ProcessScanner.environmentValue`.
     private func sessionId(for group: AgentGroup) -> String? {
         guard group.root.tool == .claudeCode else { return nil }
+
+        // Ahead of the cache: this is a small read at a path we already know,
+        // against a sysctl over a megabyte buffer, and it stays correct if the
+        // session is resumed under the same process.
+        if let entry = claudeSessions.entry(
+            forPid: group.root.pid, in: group.root.workingDirectory
+        ) {
+            return entry.sessionId
+        }
+
         if let cached = sessionIdCache[group.root.pid] { return cached }
         var found: String?
         for process in group.all {

@@ -17,6 +17,7 @@ final class SessionActivityStore {
     private let readers: [Tool: SessionActivityReader]
     private let ttl: TimeInterval
     private var current: [pid_t: SessionActivity] = [:]
+    private var contexts: [pid_t: ContextUse] = [:]
     private var computedAt: Date = .distantPast
 
     init(
@@ -48,6 +49,7 @@ final class SessionActivityStore {
 
         var claimed = Set<String>()
         var next: [pid_t: SessionActivity] = [:]
+        var nextContexts: [pid_t: ContextUse] = [:]
 
         // Most recently active first. When two agents in a project both fit a
         // log, the one that has just been typing at is the better guess for the
@@ -73,10 +75,19 @@ final class SessionActivityStore {
             guard let reading else { continue }
             claimed.insert(reading.source)
             next[group.root.pid] = reading.activity
+            nextContexts[group.root.pid] = reading.context
         }
 
         current = next
+        contexts = nextContexts
     }
 
     func activity(for pid: pid_t) -> SessionActivity? { current[pid] }
+
+    /// How full this agent's context window is, when its log said.
+    ///
+    /// Keyed by the same claim as the activity line, so an agent that could not
+    /// be told apart from its neighbour has no context either — the alternative
+    /// is putting a confident percentage against the wrong conversation.
+    func context(for pid: pid_t) -> ContextUse? { contexts[pid] }
 }

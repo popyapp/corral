@@ -224,6 +224,9 @@ enum CLI {
             "agents": groups.map { group in
                 describe(group, inventory: inventory)
             },
+            // Account-level, so it sits beside the agents rather than inside
+            // one: this is the budget they are all spending from.
+            "usage": inventory.accountUsages.map(describe),
         ]
         guard let data = try? JSONSerialization.data(
             withJSONObject: payload,
@@ -268,6 +271,43 @@ enum CLI {
         if let child = group_.busiestChild, child.load >= GroupActivity.childBusyThreshold {
             dict["waiting_on"] = ["role": child.role.rawValue, "cpu_load": child.load]
         }
+        if let context = inventory.sessionContext(for: group) {
+            dict["context"] = [
+                "used_tokens": context.usedTokens,
+                "window_tokens": context.windowTokens,
+                "fraction": context.fraction,
+                // Whether the window was proved by the transcript or taken off
+                // configuration — a script deciding whether to trust the
+                // fraction needs the same distinction the panel does.
+                "window_certain": context.windowIsCertain,
+            ] as [String: Any]
+        }
+        return dict
+    }
+
+    /// An account's allowance, with the age of the reading attached.
+    ///
+    /// `observed_at` is not decoration. These figures are a by-product of the
+    /// last turn the tool took, so anything consuming this has to be able to
+    /// tell a percentage from this morning from one from last week.
+    static func describe(_ usage: ToolUsage) -> [String: Any] {
+        var dict: [String: Any] = [
+            "tool": usage.tool.rawValue,
+            "tool_name": usage.tool.displayName,
+            "observed_at": ISO8601DateFormatter().string(from: usage.observedAt),
+            "observed_seconds_ago": Int(Date().timeIntervalSince(usage.observedAt)),
+            "limits": usage.limits.map { limit -> [String: Any] in
+                var out: [String: Any] = [
+                    "label": limit.label,
+                    "used_fraction": limit.usedFraction,
+                ]
+                if let resets = limit.resetsAt {
+                    out["resets_at"] = ISO8601DateFormatter().string(from: resets)
+                }
+                return out
+            },
+        ]
+        if let plan = usage.plan { dict["plan"] = plan }
         return dict
     }
 }

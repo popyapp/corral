@@ -11,38 +11,20 @@ struct CodexSessionActivityReader: SessionActivityReader {
 
     private let root: URL
 
-    init(root: URL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".codex/sessions")) {
+    init(root: URL = CodexRollouts.defaultRoot) {
         self.root = root
     }
 
     func reading(_ lookup: SessionLookup) -> SessionActivityReading? {
-        for file in recentSessions()
+        for file in CodexRollouts.newest(under: root)
         where !lookup.claimed.contains(file.path) && Self.projectPath(of: file) == lookup.project {
-            if let hit = scan(file), hit.at >= lookup.startedAt {
-                return SessionActivityReading(activity: hit, source: file.path)
+            if let hit = scan(file), hit.activity.at >= lookup.startedAt {
+                return SessionActivityReading(
+                    activity: hit.activity, source: file.path, context: hit.context
+                )
             }
         }
         return nil
-    }
-
-    /// Rollouts are filed by date, so the newest are the deepest. Walking the
-    /// tree and sorting by modification time is simpler than reasoning about
-    /// the date folders, and there are few enough files for it to be cheap.
-    private func recentSessions(limit: Int = 8) -> [URL] {
-        let keys: [URLResourceKey] = [.contentModificationDateKey]
-        guard let walker = FileManager.default.enumerator(
-            at: root, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
-        ) else { return [] }
-
-        var files: [(URL, Date)] = []
-        for case let url as URL in walker
-        where url.pathExtension == "jsonl" && url.lastPathComponent.hasPrefix("rollout-") {
-            let at = (try? url.resourceValues(forKeys: [.contentModificationDateKey])
-                .contentModificationDate) ?? .distantPast
-            files.append((url, at))
-        }
-        return files.sorted { $0.1 > $1.1 }.prefix(limit).map(\.0)
     }
 
     static func projectPath(of file: URL) -> String? {
@@ -55,17 +37,36 @@ struct CodexSessionActivityReader: SessionActivityReader {
         return payload["cwd"] as? String
     }
 
-    private func scan(_ file: URL) -> SessionActivity? {
+    /// The newest line that says something, and the newest that counts tokens.
+    ///
+    /// They are different entries — Codex reports the window in its own
+    /// `token_count` event, which is emitted after the turn the activity line
+    /// came from — so the walk carries on until it has both, or runs out.
+    private func scan(_ file: URL) -> (activity: SessionActivity, context: ContextUse?)? {
+        var found: SessionActivity?
+        var context: ContextUse?
+
         for line in FileTail.lines(of: file) {
             guard let data = line.data(using: .utf8),
                   let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let payload = record["payload"] as? [String: Any],
-                  let summary = Self.summarise(payload),
-                  let at = ClaudeSessionActivityReader.timestamp(record["timestamp"])
+                  let payload = record["payload"] as? [String: Any]
             else { continue }
-            return SessionActivity(summary: summary, at: at, fromSubagent: false)
+
+            if context == nil, payload["type"] as? String == "token_count" {
+                context = CodexContext.use(payload)
+            }
+
+            if found == nil,
+               let summary = Self.summarise(payload),
+               let at = ClaudeSessionActivityReader.timestamp(record["timestamp"]) {
+                found = SessionActivity(summary: summary, at: at, fromSubagent: false)
+            }
+
+            if found != nil && context != nil { break }
         }
-        return nil
+
+        guard let found else { return nil }
+        return (found, context)
     }
 
     /// Codex splits one turn across two entries — an `event_msg` for the UI and
