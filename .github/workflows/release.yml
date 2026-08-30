@@ -109,7 +109,12 @@ jobs:
       - name: Build app bundle
         run: VERSION="$VERSION" COMMIT="$COMMIT" ./scripts/make_app.sh
 
+      # Gated on the certificate, not on the Apple keys: notarisation needs a
+      # Developer ID signature, and submitting an ad-hoc build fails the run
+      # rather than warning. A repository with the keys but no certificate is a
+      # half-finished setup, and it should still ship.
       - name: Notarise the app
+        if: env.MACOS_CERTIFICATE_P12 != ''
         run: ./scripts/notarize.sh build/Corral.app
 
       # Built from the stapled app, so the copy inside carries its own ticket.
@@ -117,6 +122,7 @@ jobs:
         run: VERSION="$VERSION" ./scripts/make_dmg.sh
 
       - name: Notarise the DMG
+        if: env.MACOS_CERTIFICATE_P12 != ''
         run: ./scripts/notarize.sh "build/Corral-$VERSION.dmg"
 
       - name: Also ship a zip

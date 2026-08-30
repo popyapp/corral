@@ -32,6 +32,19 @@ if [ -z "${AC_API_KEY_ID:-}" ] || [ -z "${AC_API_ISSUER_ID:-}" ] || [ -z "${AC_A
     exit 0
 fi
 
+# Credentials are not enough on their own. Apple refuses anything that is not
+# signed by a Developer ID with the hardened runtime, so submitting an ad-hoc
+# build does not produce a warning — it produces a failed submission, and with
+# it a red workflow and no release at all. A half-configured repository (Apple
+# keys set, certificate not) should still ship, so this skips rather than dies.
+SUBJECT="$([ -d "$TARGET" ] && codesign -dv "$TARGET" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
+if [ -d "$TARGET" ] && [ -z "$SUBJECT" ]; then
+    echo "⚠ $TARGET is not signed with a Developer ID — skipping notarisation"
+    echo "  Apple will not accept an ad-hoc signature. Set MACOS_CERTIFICATE_P12,"
+    echo "  MACOS_CERTIFICATE_PASSWORD and MACOS_SIGNING_IDENTITY as well."
+    exit 0
+fi
+
 CREDS=(--key "$AC_API_KEY_PATH" --key-id "$AC_API_KEY_ID" --issuer "$AC_API_ISSUER_ID")
 
 # An .app cannot be uploaded as itself — the service takes an archive. A .dmg
