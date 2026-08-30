@@ -1,5 +1,7 @@
 #!/bin/bash
 # Sends one artefact to Apple, waits for the verdict, and staples the ticket.
+# A refusal stops the release. A queue that never answers does not: see the
+# note above the verdict at the bottom of this file.
 #
 #   ./scripts/notarize.sh build/Corral.app
 #   ./scripts/notarize.sh build/Corral-1.2.3.dmg
@@ -103,7 +105,8 @@ if [ -z "$SUBMISSION" ]; then
 fi
 echo "  submission $SUBMISSION"
 
-DEADLINE=$(( $(date +%s) + 3600 ))
+WAIT_SECONDS="${NOTARY_TIMEOUT:-1800}"
+DEADLINE=$(( $(date +%s) + WAIT_SECONDS ))
 STATUS="In Progress"
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     # Every failure mode of this call — a dropped connection, a 500, a partial
@@ -111,21 +114,57 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     STATUS="$(xcrun notarytool info "$SUBMISSION" "${CREDS[@]}" --output-format json 2>/dev/null \
         | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status","Unknown"))' 2>/dev/null || echo Unknown)"
     case "$STATUS" in
-        Accepted) break ;;
-        Invalid|Rejected) break ;;
+        Accepted|Invalid|Rejected) break ;;
         *) sleep 30 ;;
     esac
 done
 
-if [ "$STATUS" != "Accepted" ]; then
-    echo "✗ notarisation ended as: $STATUS"
-    # The log is the only place that says *why*, and it is the first thing
-    # anyone will want. Fetching it costs one call and saves an hour.
-    xcrun notarytool log "$SUBMISSION" "${CREDS[@]}" || true
-    [ -n "$CLEANUP" ] && rm -f "$CLEANUP"
-    exit 1
+# Spelt out rather than folded into an && chain. `set -e` tolerates a failing
+# test on the left of an &&, but the reader has to know that to be sure, and
+# the .dmg branch — the one where CLEANUP is empty — is the branch that has
+# never actually run.
+if [ -n "$CLEANUP" ]; then
+    rm -f "$CLEANUP"
 fi
-[ -n "$CLEANUP" ] && rm -f "$CLEANUP"
+
+# Three outcomes, and only two of them are ours.
+#
+# Apple saying no is a fault in what we sent: the wrong certificate, a missing
+# hardened runtime, an unsigned nested binary. That has to stop the release,
+# because shipping past it means shipping the thing Apple just objected to.
+#
+# Apple saying nothing is weather. The queue took over an hour for one small
+# app on the day this was written, twice, with the service reporting itself
+# healthy — and because a silence was treated the same as a refusal, four runs
+# in a row published nothing at all while the newest download on the page
+# stayed an ad-hoc build from before any of this existed. Waiting longer does
+# not make Apple faster; it just spends a macOS runner to arrive at the same
+# unanswered question.
+#
+# So a silence ships. The build is still Developer ID signed with the hardened
+# runtime, which is most of the distance, and the release notes ask `stapler
+# validate` rather than assuming — an unstapled build gets the right-click
+# instructions, not a claim it cannot support. If Apple accepts the submission
+# after we stop listening, the ticket exists on their side and Gatekeeper finds
+# it online at first launch; stapling is what makes that work offline too, and
+# `xcrun stapler staple` on a later build costs nothing to run.
+case "$STATUS" in
+    Accepted) ;;
+    Invalid|Rejected)
+        echo "✗ Apple rejected $TARGET — status: $STATUS"
+        # The log is the only place that says *why*, and it is the first thing
+        # anyone will want. Fetching it costs one call and saves an hour.
+        xcrun notarytool log "$SUBMISSION" "${CREDS[@]}" || true
+        exit 1
+        ;;
+    *)
+        echo "⚠ Apple has not answered in $(( WAIT_SECONDS / 60 )) minutes — last status: $STATUS"
+        echo "  submission $SUBMISSION"
+        echo "  Shipping the signed build unstapled. To check on it later:"
+        echo "    xcrun notarytool info $SUBMISSION --key <p8> --key-id <id> --issuer <issuer>"
+        exit 0
+        ;;
+esac
 
 # Staple the ticket into the artefact itself. Without this the check needs
 # Apple reachable at first launch, so the one person who opens it on a plane

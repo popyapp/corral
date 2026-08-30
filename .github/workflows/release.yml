@@ -161,11 +161,17 @@ jobs:
             echo "Open the DMG and drag **Corral** to Applications."
             echo ""
             # What the person downloading this will actually meet, decided by
-            # looking rather than by assuming. A release built without the
-            # signing secrets is ad-hoc, and telling its readers to double-click
-            # would send them into a warning with no explanation.
+            # looking rather than by assuming. There are three states, not two,
+            # and this paragraph is the only instruction most people will read —
+            # so calling a Developer ID build ad-hoc is as wrong as the reverse.
             if xcrun stapler validate build/Corral.app >/dev/null 2>&1; then
               echo "Signed and notarised by Apple, so it opens on a double click."
+              echo "Universal: Apple Silicon and Intel."
+            elif codesign -dv --verbose=2 build/Corral.app 2>&1 | grep -q "^Authority=Developer ID"; then
+              echo "Signed with a Developer ID and the hardened runtime, but Apple's"
+              echo "notary service had not answered by the time the build stopped"
+              echo "waiting, so no ticket is stapled into it. macOS checks with Apple"
+              echo "at first launch; if it asks anyway, use **right-click → Open**."
               echo "Universal: Apple Silicon and Intel."
             else
               echo "This build is signed ad hoc rather than notarised, so the first"
