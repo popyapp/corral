@@ -80,29 +80,48 @@ esac
 
 echo "Notarising $TARGET..."
 
-# Two attempts. The first run of this against Apple spent thirteen minutes
-# polling a submission it had successfully filed and then died on
-# NSURLErrorDomain -1009 — the upload was fine, the connection that was waiting
-# for the verdict was not. A transient network fault on someone else's service
-# should not turn a release red, and a second submission of an identical
-# artefact costs Apple nothing.
-submit() { xcrun notarytool submit "$UPLOAD" "${CREDS[@]}" --wait --timeout 30m; }
+# Submitted once, then polled here rather than by `notarytool --wait`.
+#
+# `--wait` couples two things that fail differently. Its timeout cannot tell a
+# queue that is merely slow from a request that is never coming back, so when
+# Apple took longer than half an hour — which it did, twice, with the service
+# reporting itself healthy — the only recovery was to submit the same artefact
+# again and start the wait over. Two attempts, an hour, no release, and Apple
+# holding two copies of an identical upload.
+#
+# Polling separately means the upload happens exactly once. A slow queue costs
+# patience instead of a resubmission, and a dropped connection — which is how
+# the first real run died, on NSURLErrorDomain -1009 while waiting — is just a
+# poll that returns nothing and is tried again.
+SUBMISSION="$(xcrun notarytool submit "$UPLOAD" "${CREDS[@]}" --output-format json \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
 
-if ! submit; then
-    echo "⚠ first attempt failed — retrying once"
-    sleep 30
-    RETRIED=1
-else
-    RETRIED=0
+if [ -z "$SUBMISSION" ]; then
+    echo "✗ the submission was not accepted — nothing to wait for"
+    [ -n "$CLEANUP" ] && rm -f "$CLEANUP"
+    exit 1
 fi
+echo "  submission $SUBMISSION"
 
-if [ "$RETRIED" = "1" ] && ! submit; then
+DEADLINE=$(( $(date +%s) + 3600 ))
+STATUS="In Progress"
+while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+    # Every failure mode of this call — a dropped connection, a 500, a partial
+    # body — lands on "Unknown", which simply means ask again in half a minute.
+    STATUS="$(xcrun notarytool info "$SUBMISSION" "${CREDS[@]}" --output-format json 2>/dev/null \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status","Unknown"))' 2>/dev/null || echo Unknown)"
+    case "$STATUS" in
+        Accepted) break ;;
+        Invalid|Rejected) break ;;
+        *) sleep 30 ;;
+    esac
+done
+
+if [ "$STATUS" != "Accepted" ]; then
+    echo "✗ notarisation ended as: $STATUS"
     # The log is the only place that says *why*, and it is the first thing
     # anyone will want. Fetching it costs one call and saves an hour.
-    echo "✗ notarisation failed — fetching the log"
-    SUBMISSION=$(xcrun notarytool history "${CREDS[@]}" --output-format json 2>/dev/null \
-        | python3 -c 'import sys,json;print(json.load(sys.stdin)["history"][0]["id"])' 2>/dev/null || true)
-    [ -n "$SUBMISSION" ] && xcrun notarytool log "$SUBMISSION" "${CREDS[@]}" || true
+    xcrun notarytool log "$SUBMISSION" "${CREDS[@]}" || true
     [ -n "$CLEANUP" ] && rm -f "$CLEANUP"
     exit 1
 fi
