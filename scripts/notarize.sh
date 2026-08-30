@@ -91,8 +91,12 @@ submit() { xcrun notarytool submit "$UPLOAD" "${CREDS[@]}" --wait --timeout 30m;
 if ! submit; then
     echo "⚠ first attempt failed — retrying once"
     sleep 30
+    RETRIED=1
+else
+    RETRIED=0
 fi
-if ! submit; then
+
+if [ "$RETRIED" = "1" ] && ! submit; then
     # The log is the only place that says *why*, and it is the first thing
     # anyone will want. Fetching it costs one call and saves an hour.
     echo "✗ notarisation failed — fetching the log"
