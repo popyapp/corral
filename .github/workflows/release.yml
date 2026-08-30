@@ -117,13 +117,18 @@ jobs:
         if: env.MACOS_CERTIFICATE_P12 != ''
         run: ./scripts/notarize.sh build/Corral.app
 
-      # Built from the stapled app, so the copy inside carries its own ticket.
+      # Both artefacts are built from the stapled app, and only the app is
+      # sent to Apple.
+      #
+      # Gatekeeper assesses the application, not the container it arrived in. A
+      # ticket stapled into the app is what makes it open offline, whether it
+      # was dragged out of a disk image or unzipped. Notarising the image as
+      # well is Apple's advice and buys a second check of the same binary — at
+      # the price of a second trip through a queue that today took over an hour
+      # for one small app, and failed the release twice while holding a
+      # submission it had already accepted.
       - name: Build DMG
         run: VERSION="$VERSION" ./scripts/make_dmg.sh
-
-      - name: Notarise the DMG
-        if: env.MACOS_CERTIFICATE_P12 != ''
-        run: ./scripts/notarize.sh "build/Corral-$VERSION.dmg"
 
       - name: Also ship a zip
         run: |
@@ -159,7 +164,7 @@ jobs:
             # looking rather than by assuming. A release built without the
             # signing secrets is ad-hoc, and telling its readers to double-click
             # would send them into a warning with no explanation.
-            if xcrun stapler validate "build/Corral-$VERSION.dmg" >/dev/null 2>&1; then
+            if xcrun stapler validate build/Corral.app >/dev/null 2>&1; then
               echo "Signed and notarised by Apple, so it opens on a double click."
               echo "Universal: Apple Silicon and Intel."
             else
