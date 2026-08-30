@@ -30,18 +30,29 @@ if [ -z "${COMMIT:-}" ]; then
     fi
 fi
 APP_NAME="Corral"
-BUNDLE_ID="dev.kulekci.Corral"
+# Reverse-DNS of the organisation the Developer ID certificate is issued to.
+# It is also the domain the app's settings live under, so changing it again
+# would silently reset everyone's preferences.
+BUNDLE_ID="com.scaleyazilim.corral"
 OUT_DIR="build"
 APP="$OUT_DIR/$APP_NAME.app"
 
-echo "Building release binary..."
-swift build -c release
+# Both architectures, in one binary.
+#
+# Not a nicety: a thin arm64 build cannot start at all on an Intel Mac, and
+# nothing about a downloaded DMG warns you before you try. Shipping one file
+# that runs everywhere is cheaper than explaining which file to take.
+ARCHS=(--arch arm64 --arch x86_64)
+
+echo "Building release binary (arm64 + x86_64)..."
+swift build -c release "${ARCHS[@]}"
+BIN_DIR="$(swift build -c release "${ARCHS[@]}" --show-bin-path)"
 
 echo "Assembling $APP..."
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-cp ".build/release/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
+cp "$BIN_DIR/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
 cp "Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -79,22 +90,35 @@ PLIST
 
 echo "APPL????" > "$APP/Contents/PkgInfo"
 
-# Ad hoc by default. Corral needs no entitlements and no privacy grants — every
-# fact it reads is available to any process running as you — so an ad-hoc build
-# is perfectly usable. Sign with a real identity if you want Gatekeeper to stop
-# asking:
+# Ad hoc by default, which is a working app that Gatekeeper will refuse until
+# somebody right-clicks it. Releases pass a real identity:
 #
-#   CODESIGN_IDENTITY="Apple Development: you (TEAMID)" ./scripts/make_app.sh
+#   CODESIGN_IDENTITY="Developer ID Application: … (TEAMID)" ./scripts/make_app.sh
 IDENTITY="${CODESIGN_IDENTITY:--}"
 
+# The hardened runtime is what notarisation requires, and Corral needs no
+# exception to it — no JIT, no unsigned executable memory, no DYLD overrides,
+# and not one entitlement. Everything it reads is readable by any process
+# running as you. It is applied to ad-hoc builds too, so a local build behaves
+# the way the shipped one does rather than differing in the one respect that
+# tends to break only after release.
+SIGN_ARGS=(--force --options runtime --sign "$IDENTITY")
+
 if [ "$IDENTITY" = "-" ]; then
-    echo "Signing (ad hoc)..."
+    echo "Signing (ad hoc, hardened runtime)..."
+    # A secure timestamp needs Apple's server and an identity it recognises;
+    # asking for one ad hoc just fails.
+    SIGN_ARGS+=(--timestamp=none)
 else
     echo "Signing with identity: $IDENTITY"
+    # Notarisation rejects anything without one.
+    SIGN_ARGS+=(--timestamp)
 fi
+
 # No nested code in the bundle, so --deep (deprecated) buys nothing.
-codesign --force --sign "$IDENTITY" "$APP"
+codesign "${SIGN_ARGS[@]}" "$APP"
 
 echo "Done: $APP"
-codesign -dv "$APP" 2>&1 | grep -E '^(CDHash|Authority|Signature)' || true
+codesign -dv "$APP" 2>&1 | grep -E '^(CDHash|Authority|Signature|Runtime)' || true
+echo "Architectures: $(lipo -archs "$APP/Contents/MacOS/$APP_NAME")"
 

@@ -220,8 +220,9 @@ from git instead: the last release tag plus how far past it the tree is, as
 `0.1.5+3`. If the tree had uncommitted changes the hash carries a `-dirty`
 suffix, and About says the binary matches no commit at all.
 
-Builds are ad-hoc signed rather than notarised, so the first launch needs
-right-click → Open.
+Each release says whether it was notarised. A notarised build opens on a double
+click; an ad-hoc one needs right-click → Open the first time. See
+[Signing and notarisation](#signing-and-notarisation).
 
 Or build from source (macOS 13+, Xcode command line tools):
 
@@ -237,6 +238,55 @@ Or during development:
 ```sh
 swift run Corral            # the window
 swift run Corral --list     # the same inventory, printed
+```
+
+## Signing and notarisation
+
+Downloaded apps that Apple has not seen get stopped by Gatekeeper, so releases
+are signed with a Developer ID certificate and sent to Apple to be notarised.
+That is not App Store review — nobody reads it. Apple scans the binary and
+answers in a few minutes, and what it buys is an app that opens on a double
+click instead of one that has to be right-clicked past a warning.
+
+Corral is **not** on the Mac App Store and cannot be. Two of the calls it is
+built on are refused inside the App Sandbox, measured rather than assumed:
+
+- `proc_pid_rusage` returns `EPERM` for every other process, so there is no CPU
+  and no memory — which is the header, the graph, the idle detection and the
+  whole Reclaim feature.
+- `$HOME` is redirected into the app's container, so the logs the agents keep
+  for themselves are unreachable, and with them every line about what an agent
+  is doing or how full its context is.
+
+Everything else survives the sandbox, including reading the process table,
+argument vectors, paths and working directories. It is those two that decide it.
+
+Builds are **universal** — Apple Silicon and Intel — under the **hardened
+runtime**, with no entitlements at all. Nothing Corral reads needs one.
+
+A fork needs none of this. With no secrets set the same workflow produces the
+same artefacts, ad-hoc signed and unnotarised, and says so in its release notes.
+To sign your own, set six repository secrets:
+
+| Secret | What it is |
+|---|---|
+| `MACOS_CERTIFICATE_P12` | Developer ID Application certificate, exported as `.p12`, base64 |
+| `MACOS_CERTIFICATE_PASSWORD` | the password you gave that export |
+| `MACOS_SIGNING_IDENTITY` | e.g. `Developer ID Application: Name (TEAMID)` |
+| `AC_API_KEY_ID` | App Store Connect API key id |
+| `AC_API_ISSUER_ID` | that key's issuer id |
+| `AC_API_KEY_P8` | the key's `.p8` file, base64 |
+
+An API key rather than an Apple ID and password: it has no second factor to get
+stuck on, and it can be revoked on its own. The workflow imports the certificate
+into a keychain that dies with the runner, and deletes both the keychain and the
+key file whatever happens.
+
+Locally:
+
+```sh
+CODESIGN_IDENTITY="Developer ID Application: Name (TEAMID)" ./scripts/make_app.sh
+./scripts/notarize.sh build/Corral.app        # skips itself without credentials
 ```
 
 ## Terminal mode
