@@ -37,7 +37,16 @@ fi
 # build does not produce a warning — it produces a failed submission, and with
 # it a red workflow and no release at all. A half-configured repository (Apple
 # keys set, certificate not) should still ship, so this skips rather than dies.
-SUBJECT="$([ -d "$TARGET" ] && codesign -dv "$TARGET" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
+# Written as a plain `if` rather than folded into the assignment. A command
+# substitution that fails takes the whole script with it under `set -e`, and
+# `[ -d ]` on a .dmg fails by design — so the one-liner version of this check
+# killed the run before it printed anything, which is a worse failure than the
+# one it was added to prevent.
+SUBJECT=""
+if [ -d "$TARGET" ]; then
+    SUBJECT="$(codesign -dv "$TARGET" 2>&1 | sed -n 's/^Authority=//p' | head -1 || true)"
+fi
+
 if [ -d "$TARGET" ] && [ -z "$SUBJECT" ]; then
     echo "⚠ $TARGET is not signed with a Developer ID — skipping notarisation"
     echo "  Apple will not accept an ad-hoc signature. Set MACOS_CERTIFICATE_P12,"
