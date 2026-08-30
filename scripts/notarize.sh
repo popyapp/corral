@@ -44,7 +44,12 @@ fi
 # one it was added to prevent.
 SUBJECT=""
 if [ -d "$TARGET" ]; then
-    SUBJECT="$(codesign -dv "$TARGET" 2>&1 | sed -n 's/^Authority=//p' | head -1 || true)"
+    # --verbose=2, and the reason is the whole point of the line: at the
+    # default verbosity `codesign -dv` does not print Authority at all. Asking
+    # for it without asking loudly enough answers "unsigned" for every input,
+    # so this guard skipped every build it was given — including correctly
+    # signed ones — and nothing was ever notarised.
+    SUBJECT="$(codesign -dv --verbose=2 "$TARGET" 2>&1 | sed -n 's/^Authority=//p' | head -1 || true)"
 fi
 
 if [ -d "$TARGET" ] && [ -z "$SUBJECT" ]; then
@@ -74,7 +79,20 @@ case "$TARGET" in
 esac
 
 echo "Notarising $TARGET..."
-if ! xcrun notarytool submit "$UPLOAD" "${CREDS[@]}" --wait --timeout 30m; then
+
+# Two attempts. The first run of this against Apple spent thirteen minutes
+# polling a submission it had successfully filed and then died on
+# NSURLErrorDomain -1009 — the upload was fine, the connection that was waiting
+# for the verdict was not. A transient network fault on someone else's service
+# should not turn a release red, and a second submission of an identical
+# artefact costs Apple nothing.
+submit() { xcrun notarytool submit "$UPLOAD" "${CREDS[@]}" --wait --timeout 30m; }
+
+if ! submit; then
+    echo "⚠ first attempt failed — retrying once"
+    sleep 30
+fi
+if ! submit; then
     # The log is the only place that says *why*, and it is the first thing
     # anyone will want. Fetching it costs one call and saves an hour.
     echo "✗ notarisation failed — fetching the log"

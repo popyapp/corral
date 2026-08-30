@@ -119,6 +119,6 @@ fi
 codesign "${SIGN_ARGS[@]}" "$APP"
 
 echo "Done: $APP"
-codesign -dv "$APP" 2>&1 | grep -E '^(CDHash|Authority|Signature|Runtime)' || true
+codesign -dv --verbose=2 "$APP" 2>&1 | grep -E '^(CDHash|Authority|Signature|Runtime)' || true
 echo "Architectures: $(lipo -archs "$APP/Contents/MacOS/$APP_NAME")"
 
