@@ -1,0 +1,84 @@
+name: Staple
+
+# Notarisation is asynchronous; a release does not have to be.
+#
+# The build waits half an hour for Apple and then ships whatever it has, because
+# holding a macOS runner hostage to someone else's queue costs more than it buys
+# and four runs in a row once published nothing at all. What it ships in that
+# case is Developer ID signed with no ticket stapled — fine for anyone online,
+# since macOS asks Apple at first launch, and a warning for anyone who is not.
+#
+# This is the way to finish the job afterwards. Stapling needs no credentials
+# and no rebuild: the ticket is tied to the code directory hash Apple already
+# scanned, so the same bytes that were published are the ones stapled, and a
+# fresh build would produce a different hash and a ticket that does not fit.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release to staple, e.g. v0.1.16"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  staple:
+    name: Staple a published release
+    runs-on: macos-15
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch what was published
+        run: |
+          mkdir -p build
+          gh release download "$TAG" -D build --clobber
+          # Unpacked from the zip rather than the DMG: ditto restores the
+          # extended attributes the signature lives in, and a mounted image is
+          # read-only, which stapling is not.
+          ditto -x -k "build/Corral-${TAG#v}.zip" build
+
+      - name: Ask the binary what it is
+        run: |
+          # The tag says what someone typed. The binary says what was built.
+          read -r _ VERSION COMMIT <<< "$(build/Corral.app/Contents/MacOS/Corral --version)"
+          COMMIT="${COMMIT//[()]/}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "COMMIT=$COMMIT" >> "$GITHUB_ENV"
+          echo "built as $VERSION from $COMMIT"
+          [ "v$VERSION" = "$TAG" ] || { echo "✗ $TAG holds a build of $VERSION"; exit 1; }
+
+      - name: Staple
+        run: |
+          xcrun stapler staple build/Corral.app
+          xcrun stapler validate build/Corral.app
+          # The assessment Gatekeeper itself runs. Without this the job can
+          # report success on a ticket that does not actually satisfy it.
+          spctl -a -vvv -t exec build/Corral.app
+
+      - name: Rebuild the containers around the stapled app
+        run: |
+          VERSION="$VERSION" ./scripts/make_dmg.sh
+          cd build
+          rm -f "Corral-$VERSION.zip"
+          ditto -c -k --sequesterRsrc --keepParent Corral.app "Corral-$VERSION.zip"
+          shasum -a 256 "Corral-$VERSION.dmg" > "Corral-$VERSION.dmg.sha256"
+          shasum -a 256 "Corral-$VERSION.zip" > "Corral-$VERSION.zip.sha256"
+
+      - name: Rewrite the notes and replace the downloads
+        run: |
+          # LC_ALL: the month name is written into a release note read by
+          # everyone, and `date +%B` follows whatever locale the runner happens
+          # to carry. On this machine it answers "Ağustos".
+          STAPLED_LATER="$(LC_ALL=C date -u '+%-d %B %Y')" \
+            GITHUB_SHA="$COMMIT" ./scripts/release_notes.sh > /tmp/release-notes.md
+          gh release upload "$TAG" \
+            "build/Corral-$VERSION.dmg" \
+            "build/Corral-$VERSION.dmg.sha256" \
+            "build/Corral-$VERSION.zip" \
+            "build/Corral-$VERSION.zip.sha256" \
+            --clobber
+          gh release edit "$TAG" --notes-file /tmp/release-notes.md
