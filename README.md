@@ -220,8 +220,8 @@ from git instead: the last release tag plus how far past it the tree is, as
 `0.1.5+3`. If the tree had uncommitted changes the hash carries a `-dirty`
 suffix, and About says the binary matches no commit at all.
 
-Each release says whether it was notarised. A notarised build opens on a double
-click; an ad-hoc one needs right-click → Open the first time. See
+Each release says how it was signed. A notarised build opens on a double click;
+anything else needs right-click → Open the first time. See
 [Signing and notarisation](#signing-and-notarisation).
 
 Or build from source (macOS 13+, Xcode command line tools):
@@ -245,8 +245,17 @@ swift run Corral --list     # the same inventory, printed
 Downloaded apps that Apple has not seen get stopped by Gatekeeper, so releases
 are signed with a Developer ID certificate and sent to Apple to be notarised.
 That is not App Store review — nobody reads it. Apple scans the binary and
-answers in a few minutes, and what it buys is an app that opens on a double
+usually answers in minutes, and what it buys is an app that opens on a double
 click instead of one that has to be right-clicked past a warning.
+
+Usually. The queue belongs to Apple, and it has taken over half an hour for one
+small app with the service reporting itself healthy — so the build waits thirty
+minutes and then ships the signed build anyway rather than throwing the release
+away over weather. A refusal is a different thing: it means something is wrong
+with what was sent, and it stops the release. So a download is in one of three
+states and the notes say which — notarised, Developer ID signed with no ticket
+stapled, or ad-hoc. Only the last one is unsigned in any meaningful sense; the
+middle one is checked with Apple over the network at first launch instead.
 
 Corral is **not** on the Mac App Store and cannot be. Two of the calls it is
 built on are refused inside the App Sandbox, measured rather than assumed:

@@ -8,7 +8,7 @@
 #
 # Notarisation is not App Store review. Nobody looks at it: Apple scans the
 # binary for malware and for the things a signature is supposed to guarantee,
-# and answers in a few minutes. What it buys is the difference between an app
+# and usually answers in minutes — though not always; see the verdict below. What it buys is the difference between an app
 # that opens when double-clicked and one that has to be right-clicked past a
 # warning saying it cannot be checked.
 #
