@@ -1,0 +1,54 @@
+name: Ask Apple
+
+# What Apple actually thinks of a submission, which is not visible anywhere
+# else. A build that gives up waiting prints an id and moves on; `stapler` can
+# then tell you a ticket is missing, but not whether that is because the queue
+# is slow or because the submission was refused. Those two call for opposite
+# responses — wait, or fix the signing — and guessing between them has already
+# cost several hours here.
+#
+# The credentials live in this repository's secrets, so this is the only place
+# the question can be asked without handing the key around.
+on:
+  workflow_dispatch:
+    inputs:
+      submission:
+        description: "Submission id (blank = list the recent ones)"
+        required: false
+        default: ""
+
+permissions: {}
+
+jobs:
+  ask:
+    name: What does Apple say
+    runs-on: macos-15
+    steps:
+      - name: Write the notarisation key
+        env:
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
+        run: |
+          echo "$AC_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          chmod 600 "$RUNNER_TEMP/notary.p8"
+
+      - name: Ask
+        env:
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          SUBMISSION: ${{ inputs.submission }}
+        run: |
+          CREDS=(--key "$RUNNER_TEMP/notary.p8" --key-id "$AC_API_KEY_ID" --issuer "$AC_API_ISSUER_ID")
+          echo "── recent submissions ──"
+          xcrun notarytool history "${CREDS[@]}" | head -60
+          if [ -n "$SUBMISSION" ]; then
+            echo "── $SUBMISSION ──"
+            xcrun notarytool info "$SUBMISSION" "${CREDS[@]}" || true
+            echo "── its log ──"
+            # Absent while a submission is still queued; the only place the
+            # reason lives once it is not.
+            xcrun notarytool log "$SUBMISSION" "${CREDS[@]}" || true
+          fi
+
+      - name: Forget the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/notary.p8"
