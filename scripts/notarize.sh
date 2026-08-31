@@ -82,41 +82,65 @@ esac
 
 echo "Notarising $TARGET..."
 
-# Submitted once, then polled here rather than by `notarytool --wait`.
+# Polled here rather than by `notarytool --wait`, and submitted more than once
+# if the first attempt goes quiet.
 #
-# `--wait` couples two things that fail differently. Its timeout cannot tell a
-# queue that is merely slow from a request that is never coming back, so when
-# Apple took longer than half an hour — which it did, twice, with the service
-# reporting itself healthy — the only recovery was to submit the same artefact
-# again and start the wait over. Two attempts, an hour, no release, and Apple
-# holding two copies of an identical upload.
+# `--wait` couples two things that fail differently: its timeout cannot tell a
+# queue that is merely slow from a submission that is never coming back. Both
+# happen. Asking Apple for its history of one day's uploads here returned nine
+# submissions of the same small app — two Accepted, seven still "In Progress",
+# the oldest of them twenty-two hours old — with the service reporting itself
+# healthy throughout and not one refusal among them. A submission that sticks
+# does not recover; the service will happily take another.
 #
-# Polling separately means the upload happens exactly once. A slow queue costs
-# patience instead of a resubmission, and a dropped connection — which is how
-# the first real run died, on NSURLErrorDomain -1009 while waiting — is just a
-# poll that returns nothing and is tried again.
-SUBMISSION="$(xcrun notarytool submit "$UPLOAD" "${CREDS[@]}" --output-format json \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
-
-if [ -z "$SUBMISSION" ]; then
-    echo "✗ the submission was not accepted — nothing to wait for"
-    [ -n "$CLEANUP" ] && rm -f "$CLEANUP"
-    exit 1
-fi
-echo "  submission $SUBMISSION"
-
-WAIT_SECONDS="${NOTARY_TIMEOUT:-1800}"
-DEADLINE=$(( $(date +%s) + WAIT_SECONDS ))
+# So the budget is spent as several attempts rather than one long wait. It
+# costs the same wall clock and the same runner, and the only thing it adds is
+# a second upload of a two megabyte zip. Polling separately is what makes that
+# possible, and it also means a dropped connection — which is how the first
+# real run died, on NSURLErrorDomain -1009 — is just a poll that returns
+# nothing and is tried again.
+ATTEMPT_SECONDS="${NOTARY_ATTEMPT:-900}"
+TOTAL_SECONDS="${NOTARY_TIMEOUT:-1800}"
+OVERALL_DEADLINE=$(( $(date +%s) + TOTAL_SECONDS ))
 STATUS="In Progress"
-while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-    # Every failure mode of this call — a dropped connection, a 500, a partial
-    # body — lands on "Unknown", which simply means ask again in half a minute.
-    STATUS="$(xcrun notarytool info "$SUBMISSION" "${CREDS[@]}" --output-format json 2>/dev/null \
-        | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status","Unknown"))' 2>/dev/null || echo Unknown)"
+ATTEMPTS=""
+
+while :; do
+    SUBMISSION="$(xcrun notarytool submit "$UPLOAD" "${CREDS[@]}" --output-format json \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+
+    if [ -z "$SUBMISSION" ]; then
+        echo "✗ the submission was not accepted — nothing to wait for"
+        if [ -n "$CLEANUP" ]; then rm -f "$CLEANUP"; fi
+        exit 1
+    fi
+    echo "  submission $SUBMISSION"
+    ATTEMPTS="$ATTEMPTS $SUBMISSION"
+
+    ATTEMPT_DEADLINE=$(( $(date +%s) + ATTEMPT_SECONDS ))
+    if [ "$ATTEMPT_DEADLINE" -gt "$OVERALL_DEADLINE" ]; then
+        ATTEMPT_DEADLINE="$OVERALL_DEADLINE"
+    fi
+
+    while [ "$(date +%s)" -lt "$ATTEMPT_DEADLINE" ]; do
+        # Every failure mode of this call — a dropped connection, a 500, a
+        # partial body — lands on "Unknown", which simply means ask again in
+        # half a minute.
+        STATUS="$(xcrun notarytool info "$SUBMISSION" "${CREDS[@]}" --output-format json 2>/dev/null \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status","Unknown"))' 2>/dev/null || echo Unknown)"
+        case "$STATUS" in
+            Accepted|Invalid|Rejected) break ;;
+            *) sleep 30 ;;
+        esac
+    done
+
     case "$STATUS" in
         Accepted|Invalid|Rejected) break ;;
-        *) sleep 30 ;;
     esac
+    if [ "$(date +%s)" -ge "$OVERALL_DEADLINE" ]; then
+        break
+    fi
+    echo "  no answer in $(( ATTEMPT_SECONDS / 60 )) minutes — submitting again"
 done
 
 # Spelt out rather than folded into an && chain. `set -e` tolerates a failing
@@ -158,10 +182,11 @@ case "$STATUS" in
         exit 1
         ;;
     *)
-        echo "⚠ Apple has not answered in $(( WAIT_SECONDS / 60 )) minutes — last status: $STATUS"
-        echo "  submission $SUBMISSION"
-        echo "  Shipping the signed build unstapled. To check on it later:"
-        echo "    xcrun notarytool info $SUBMISSION --key <p8> --key-id <id> --issuer <issuer>"
+        echo "⚠ Apple has not answered in $(( TOTAL_SECONDS / 60 )) minutes — last status: $STATUS"
+        echo "  submissions:$ATTEMPTS"
+        echo "  Shipping the signed build unstapled. The ticket can be added to"
+        echo "  the published files later, without rebuilding, with the Staple"
+        echo "  workflow — the same bytes are what Apple was asked about."
         exit 0
         ;;
 esac

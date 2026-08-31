@@ -8,10 +8,15 @@ name: Staple
 # case is Developer ID signed with no ticket stapled — fine for anyone online,
 # since macOS asks Apple at first launch, and a warning for anyone who is not.
 #
-# This is the way to finish the job afterwards. Stapling needs no credentials
-# and no rebuild: the ticket is tied to the code directory hash Apple already
-# scanned, so the same bytes that were published are the ones stapled, and a
-# fresh build would produce a different hash and a ticket that does not fit.
+# This is the way to finish the job afterwards, and the reason it can work at
+# all is that it does not rebuild: Apple's ticket is tied to the code directory
+# hash it scanned, so the published bytes are the only ones it fits. A fresh
+# build would hash differently and the ticket would be useless.
+#
+# If the ticket is already waiting, stapling it costs nothing and needs no
+# credentials. If it is not — because the submission that was made during the
+# build is one of the ones that stick and never resolve — this asks Apple about
+# the same bytes again, which is a new submission and does need the key.
 on:
   workflow_dispatch:
     inputs:
@@ -29,6 +34,8 @@ jobs:
     env:
       TAG: ${{ inputs.tag }}
       GH_TOKEN: ${{ github.token }}
+      AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+      AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -51,12 +58,30 @@ jobs:
           echo "built as $VERSION from $COMMIT"
           [ "v$VERSION" = "$TAG" ] || { echo "✗ $TAG holds a build of $VERSION"; exit 1; }
 
-      - name: Staple
+      - name: Write the notarisation key
+        env:
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
         run: |
-          xcrun stapler staple build/Corral.app
+          KEY="$RUNNER_TEMP/notary.p8"
+          echo "$AC_API_KEY_P8" | base64 --decode > "$KEY"
+          chmod 600 "$KEY"
+          echo "AC_API_KEY_PATH=$KEY" >> "$GITHUB_ENV"
+
+      - name: Staple, asking again only if there is no ticket
+        run: |
+          if xcrun stapler staple build/Corral.app; then
+            echo "the ticket was already waiting"
+          else
+            echo "no ticket — submitting the same bytes again"
+            ./scripts/notarize.sh build/Corral.app
+          fi
+          # Both paths end here. notarize.sh ships rather than fails when Apple
+          # stays quiet, which is right for a release and wrong for this job:
+          # there is nothing to publish if nothing was stapled, so the check is
+          # made again on its own.
           xcrun stapler validate build/Corral.app
-          # The assessment Gatekeeper itself runs. Without this the job can
-          # report success on a ticket that does not actually satisfy it.
+          # The assessment Gatekeeper itself runs. Without it this can report
+          # success on a ticket that does not actually satisfy it.
           spctl -a -vvv -t exec build/Corral.app
 
       - name: Rebuild the containers around the stapled app
@@ -82,3 +107,7 @@ jobs:
             "build/Corral-$VERSION.zip.sha256" \
             --clobber
           gh release edit "$TAG" --notes-file /tmp/release-notes.md
+
+      - name: Forget the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/notary.p8"
