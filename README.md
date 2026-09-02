@@ -157,6 +157,17 @@ the exact setting it will add to `~/.claude/settings.json` or
 `~/.cursor/cli-config.json`, keeps a timestamped copy of the file, and refuses
 to touch a status line you already set up.
 
+The **Usage** tab has a *Reporting* section saying, in a sentence per tool,
+whether Corral is being told anything and what to do if it is not — including
+when everything is already on. It used to appear only inside a panel that had no
+figures, which put it out of sight exactly when someone came looking: a tool
+reporting nothing because it has not run looks identical to one reporting
+nothing because it was never asked to. Codex is listed there too, with nothing
+to press: it writes its limits into its own session logs, and while it does have
+hooks — the same seven events Claude Code has — their payload carries session
+and tool metadata and no usage at all, so a status line would add nothing. What
+refreshes Codex is running Codex.
+
 What Corral keeps out of what those tools send is the session id, the working
 directory, the context size and any limit percentages. Not the transcript path,
 not the branch, not the pull request — the payload describes what you are

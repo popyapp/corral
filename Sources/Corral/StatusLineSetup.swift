@@ -49,6 +49,26 @@ enum StatusLineSetup {
 
         static let all: [Target] = [.claudeCode, .cursorAgent]
 
+        /// A one-line answer to "is this reporting, and if not why not".
+        var summary: String {
+            switch StatusLineSetup.state(file: file) {
+            case .installed: return "Reporting through its status line."
+            case .absent: return "Not set up. \(provides)"
+            case .taken(let command):
+                return "Its status line already runs something else — "
+                    + "\(command.prefix(60)) — and Corral will not replace it."
+            case .unreadable:
+                return "Corral cannot read \(file.lastPathComponent), so it cannot tell "
+                    + "whether reporting is on."
+            }
+        }
+
+        /// Whether there is anything for a button to do.
+        var canBeInstalled: Bool {
+            if case .absent = StatusLineSetup.state(file: file) { return true }
+            return false
+        }
+
         static func of(_ tool: Tool) -> Target? {
             switch tool {
             case .claudeCode, .claudeDesktop: return .claudeCode

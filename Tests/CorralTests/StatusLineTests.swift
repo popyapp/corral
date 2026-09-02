@@ -309,3 +309,62 @@ final class StatusSnapshotLegacyTests: XCTestCase {
         XCTAssertNil(cursor.context(for: "abc"))
     }
 }
+
+// ─ What the Usage page says about reporting ─────────────────────────────────
+
+/// The Reporting section states, in a sentence per tool, whether Corral is
+/// being told anything. A sentence that is wrong here is worse than no
+/// sentence: it is the page somebody opens precisely because they cannot tell.
+final class ReportingSummaryTests: XCTestCase {
+
+    private func target(writing contents: String?) throws -> StatusLineSetup.Target {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("corral-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("settings.json")
+        if let contents { try contents.write(to: file, atomically: true, encoding: .utf8) }
+        return StatusLineSetup.Target(
+            tool: .claudeCode, name: "Claude Code", file: file,
+            argument: "claude", provides: "It would show the five-hour window."
+        )
+    }
+
+    func testAnInstalledStatusLineSaysSoAndOffersNothing() throws {
+        let target = try self.target(writing:
+            #"{"statusLine":{"type":"command","command":"/Applications/Corral.app/Contents/MacOS/Corral --statusline claude"}}"#)
+        defer { try? FileManager.default.removeItem(at: target.file.deletingLastPathComponent()) }
+        XCTAssertEqual(target.summary, "Reporting through its status line.")
+        XCTAssertFalse(target.canBeInstalled)
+    }
+
+    /// The only state with something to press, and the sentence carries what
+    /// pressing it would get you rather than leaving that to the dialog.
+    func testAnAbsentStatusLineOffersTheSetup() throws {
+        let target = try self.target(writing: #"{"model":"claude-opus-5"}"#)
+        defer { try? FileManager.default.removeItem(at: target.file.deletingLastPathComponent()) }
+        XCTAssertTrue(target.canBeInstalled)
+        XCTAssertTrue(target.summary.hasPrefix("Not set up."))
+        XCTAssertTrue(target.summary.contains("five-hour window"))
+    }
+
+    /// Somebody else's status line is not a gap to fill. The sentence names it
+    /// and promises not to touch it, and no button appears.
+    func testAStatusLineBelongingToSomethingElseIsLeftAlone() throws {
+        let target = try self.target(writing:
+            #"{"statusLine":{"type":"command","command":"~/bin/my-own-prompt.sh"}}"#)
+        defer { try? FileManager.default.removeItem(at: target.file.deletingLastPathComponent()) }
+        XCTAssertFalse(target.canBeInstalled)
+        XCTAssertTrue(target.summary.contains("my-own-prompt.sh"))
+        XCTAssertTrue(target.summary.contains("will not replace"))
+    }
+
+    /// No settings file at all reads as unreadable rather than absent, and the
+    /// difference matters: offering to edit a file Corral cannot parse is how
+    /// somebody's configuration gets damaged.
+    func testAMissingSettingsFileIsNotMistakenForAnEmptySlot() throws {
+        let target = try self.target(writing: nil)
+        defer { try? FileManager.default.removeItem(at: target.file.deletingLastPathComponent()) }
+        XCTAssertFalse(target.canBeInstalled)
+        XCTAssertTrue(target.summary.contains("settings.json"))
+    }
+}

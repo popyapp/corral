@@ -21,6 +21,7 @@ struct UsagePane: View {
                 } else {
                     rings
                     allowances
+                    reporting
                     models
                     contexts
                 }
@@ -68,28 +69,89 @@ struct UsagePane: View {
         }
     }
 
+    // ─ Reporting ────────────────────────────────────────────────────────────
+
+    /// What each tool is doing about reporting, and how to change it.
+    ///
+    /// The setup used to appear only inside a panel that had no figures, which
+    /// put it out of sight exactly when someone came looking: a tool that
+    /// reports nothing because it has not run looks identical to one that
+    /// reports nothing because it was never asked to. This says which, for
+    /// every tool, whether or not there is a button to press.
+    private var reporting: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PaneLabel("Reporting")
+            VStack(alignment: .leading, spacing: 15) {
+                ForEach(StatusLineSetup.Target.all, id: \.name) { target in
+                    ReportingRow(tool: target.tool, name: target.name, detail: target.summary) {
+                        if target.canBeInstalled {
+                            Button("Set Up \(target.name) Reporting…") {
+                                StatusLineSetup.offer(target)
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+                ReportingRow(tool: .codex, name: "Codex", detail: codexReporting) {}
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.rowCorner, style: .continuous)
+                    .fill(Theme.rowBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.rowCorner, style: .continuous)
+                    .strokeBorder(Theme.hairline, lineWidth: 1)
+            )
+        }
+    }
+
+    /// Codex has nothing to turn on, and saying so is the useful part.
+    ///
+    /// It writes its limits into every session log unasked. It does have hooks
+    /// — the same seven events Claude Code has — but their payload carries
+    /// session and tool metadata and no usage of any kind, so there is nothing
+    /// a status line could add. What refreshes these figures is running Codex.
+    private var codexReporting: String {
+        guard let usage = model.accountUsages.first(where: { $0.tool == .codex }) else {
+            return "Nothing to set up. Codex writes its limits into its own session "
+                + "logs, and Corral has not found one on this Mac yet — run Codex once "
+                + "and this fills in."
+        }
+        let age = Date().timeIntervalSince(usage.observedAt)
+        return "Nothing to set up. Codex writes its limits into its own session logs; "
+            + "the newest is \(age.durationString) old, and it refreshes the next time "
+            + "Codex runs."
+    }
+
     // ─ Models ───────────────────────────────────────────────────────────────
 
     private var models: some View {
         VStack(alignment: .leading, spacing: 10) {
             PaneLabel("Models")
-            let vendors = model.vendorUsages.filter { !$0.breakdowns.isEmpty }
-            if vendors.isEmpty {
-                // Two different nothings, and they call for different words. For
-                // the first seconds after launch the count is simply not in yet;
-                // once it is, an empty list means nothing has run. Saying
-                // "counting" to someone with no session logs would be a promise
-                // that is never kept.
-                Text(model.hasCountedModels
-                     ? "No session in the last seven days has recorded which "
-                       + "model did the work."
-                     : "Counting what each model has done. This reads a week of "
-                       + "session logs and takes a moment on the first refresh.")
+            if !model.hasCountedModels {
+                // The first seconds after launch, when the count is simply not
+                // in yet. Saying this later, to someone with no session logs,
+                // would be a promise that is never kept — so it is said only
+                // while it is true.
+                Text("Counting what each model has done. This reads a week of "
+                     + "session logs and takes a moment on the first refresh.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.faint)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(vendors) { ModelPanel(usage: $0) }
+                // Every vendor gets a row, including the ones with nothing in
+                // them. Dropping those was tidier and left the reader to guess
+                // whether the tool had been quiet or was simply not read — and
+                // those call for completely different reactions.
+                ForEach(model.vendorUsages) { usage in
+                    if usage.breakdowns.isEmpty {
+                        EmptyModelPanel(usage: usage)
+                    } else {
+                        ModelPanel(usage: usage)
+                    }
+                }
             }
         }
     }
@@ -278,6 +340,70 @@ private struct PaneLimitRow: View {
         formatter.timeStyle = .short
         return formatter
     }()
+}
+
+/// One tool's reporting: what it is doing, and the way to change it if there is
+/// one. The action is a builder rather than a flag because two of the three
+/// rows have nothing to offer, and an empty space is the honest shape for that.
+private struct ReportingRow<Action: View>: View {
+    let tool: Tool
+    let name: String
+    let detail: String
+    @ViewBuilder var action: () -> Action
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ToolGlyph(tool: tool, size: 15)
+            VStack(alignment: .leading, spacing: 7) {
+                Text(name)
+                    .font(.system(size: 12.5, weight: .medium))
+                Text(detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.subtle)
+                    .fixedSize(horizontal: false, vertical: true)
+                action()
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// A vendor with no model figures, and the reason — which is the whole point of
+/// drawing it at all.
+private struct EmptyModelPanel: View {
+    let usage: VendorUsage
+
+    /// Vendors whose models are counted, as opposed to those Corral does not
+    /// read. Two blanks that look the same and mean opposite things.
+    private static let counted = Set(ModelUsageStore.counted.map(\.vendor))
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ToolGlyph(tool: usage.tool, size: 15)
+            Text(usage.name)
+                .font(.system(size: 12.5, weight: .medium))
+            Spacer()
+            Text(reason)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.faint)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(13)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.rowCorner, style: .continuous)
+                .fill(Theme.rowBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.rowCorner, style: .continuous)
+                .strokeBorder(Theme.hairline, lineWidth: 1)
+        )
+    }
+
+    private var reason: String {
+        Self.counted.contains(usage.name)
+            ? "Nothing in the last seven days."
+            : "Corral does not count models for \(usage.name)."
+    }
 }
 
 /// What each model produced, over the same spans the allowances are measured in.

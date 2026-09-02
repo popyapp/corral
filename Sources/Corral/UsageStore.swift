@@ -91,6 +91,13 @@ final class ModelUsageStore {
     /// local data can produce.
     static let windows = [300, 10_080]
 
+    /// The tools whose models are counted at all.
+    ///
+    /// Named here so the panel can tell "nothing ran" apart from "Corral does
+    /// not read this one" — two blanks that look identical and mean opposite
+    /// things to anybody wondering why a row is empty.
+    static let counted: Set<Tool> = [.claudeCode, .codex]
+
     private let ttl: TimeInterval
     private let queue = DispatchQueue(label: "app.popy.corral.model-usage", qos: .utility)
     private let lock = NSLock()
