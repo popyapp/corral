@@ -299,7 +299,7 @@ private struct ModelPanel: View {
                 Text(usage.name)
                     .font(.system(size: 12.5, weight: .medium))
                 Spacer()
-                Text("share of output, counted from session logs")
+                Text("share of \(basis), counted from session logs")
                     .font(.system(size: 10.5))
                     .foregroundStyle(Theme.faint)
             }
@@ -311,7 +311,9 @@ private struct ModelPanel: View {
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(Theme.subtle)
                         Spacer()
-                        Text("\(ModelUse.compact(breakdown.totalOutput)) produced")
+                        Text(breakdown.isSplit
+                             ? "\(ModelUse.compact(breakdown.totalOutput)) produced"
+                             : "\(ModelUse.compact(breakdown.totalTokens)) tokens")
                             .font(.system(size: 10.5))
                             .monospacedDigit()
                             .foregroundStyle(Theme.faint)
@@ -335,6 +337,16 @@ private struct ModelPanel: View {
             RoundedRectangle(cornerRadius: Theme.rowCorner, style: .continuous)
                 .strokeBorder(Theme.hairline, lineWidth: 1)
         )
+    }
+
+    /// What the bars across every window here are shares of.
+    ///
+    /// Taken from the first window would have been wrong rather than merely
+    /// imprecise: five hours is a subset of seven days, so an unsplit Codex
+    /// session can sit inside the week without being inside the afternoon, and
+    /// the two windows then disagree. "Tokens" is true of both.
+    private var basis: String {
+        usage.breakdowns.allSatisfy(\.isSplit) ? "output" : "tokens"
     }
 
     /// The window in the words someone would use for it.
@@ -371,7 +383,9 @@ private struct ModelRow: View {
             )
             .frame(maxWidth: .infinity)
 
-            Text("\(use.outputSummary) out · \(use.inputSummary) in")
+            Text(use.isSplit
+                 ? "\(use.outputSummary) out · \(use.inputSummary) in"
+                 : "\(ModelUse.compact(use.totalTokens)) total")
                 .font(.system(size: 10.5))
                 .monospacedDigit()
                 .foregroundStyle(Theme.faint)
@@ -382,8 +396,13 @@ private struct ModelRow: View {
                 .monospacedDigit()
                 .frame(width: 40, alignment: .trailing)
         }
-        .help("\(use.model)\n\(use.outputTokens) tokens produced\n"
-              + "\(use.inputTokens) read, cache included")
+        .help(use.isSplit
+              ? "\(use.model)\n\(use.outputTokens) tokens produced\n"
+                + "\(use.inputTokens) read, cache included"
+              // Codex reports one number per session and no database of its own
+              // splits it, so this says total rather than inventing a share of
+              // it that would look like output.
+              : "\(use.model)\n\(use.totalTokens) tokens, read and produced together")
     }
 }
 

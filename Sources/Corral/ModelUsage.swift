@@ -20,10 +20,39 @@ struct ModelUse: Equatable, Identifiable {
 
     /// Everything the model read, cache included. Cached tokens are still
     /// context the model was handed; they are just context nobody paid full
-    /// price for twice.
+    /// price for twice. Zero when the source did not separate the two — see
+    /// `isSplit`.
     let inputTokens: Int
 
     let outputTokens: Int
+
+    /// What the work cost in total. Always meaningful; the two above are not.
+    let totalTokens: Int
+
+    /// Whether the source separated what was read from what was produced.
+    ///
+    /// Codex's newer session store keeps one figure per thread — `tokens_used`,
+    /// with no split anywhere in any of its databases — so a breakdown built
+    /// from it can only honestly be about totals. Rather than put a total in
+    /// the output field and let a bar labelled "output" draw it, that fact
+    /// travels with the number and the caption changes to match.
+    let isSplit: Bool
+
+    init(model: String, inputTokens: Int, outputTokens: Int) {
+        self.model = model
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.totalTokens = inputTokens + outputTokens
+        self.isSplit = true
+    }
+
+    init(model: String, totalTokens: Int) {
+        self.model = model
+        self.inputTokens = 0
+        self.outputTokens = 0
+        self.totalTokens = totalTokens
+        self.isSplit = false
+    }
 
     var id: String { model }
 
@@ -66,6 +95,29 @@ struct ModelTurn: Equatable {
     let model: String
     let inputTokens: Int
     let outputTokens: Int
+    let totalTokens: Int
+    /// See `ModelUse.isSplit`.
+    let isSplit: Bool
+
+    init(at: Date, model: String, inputTokens: Int, outputTokens: Int) {
+        self.at = at
+        self.model = model
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.totalTokens = inputTokens + outputTokens
+        self.isSplit = true
+    }
+
+    /// For a source that reports one figure for a whole session rather than a
+    /// split, and attributes it to the moment the session was last touched.
+    init(at: Date, model: String, totalTokens: Int) {
+        self.at = at
+        self.model = model
+        self.inputTokens = 0
+        self.outputTokens = 0
+        self.totalTokens = totalTokens
+        self.isSplit = false
+    }
 }
 
 /// Who did the work behind one of the account's windows.
@@ -89,21 +141,31 @@ struct ModelBreakdown: Equatable {
     /// the transcripts rather than copied out of a figure the tool cached.
     let observedAt: Date
 
+    /// True only when every turn behind this reported a split. One unsplit
+    /// source drags the whole breakdown down to totals, because a mixture would
+    /// otherwise be added up as if it were one kind of number.
+    let isSplit: Bool
+
     var isEmpty: Bool { models.isEmpty }
 
     var totalOutput: Int { models.reduce(0) { $0 + $1.outputTokens } }
     var totalInput: Int { models.reduce(0) { $0 + $1.inputTokens } }
+    var totalTokens: Int { models.reduce(0) { $0 + $1.totalTokens } }
 
-    /// A model's share of the output in this window.
+    /// The word for what the bars are shares of.
+    var basis: String { isSplit ? "output" : "tokens" }
+
+    /// A model's share of this window.
     ///
-    /// Output rather than the sum of both, because input is dominated by cache
+    /// Output when the source separates it, because input is dominated by cache
     /// reads — on the machine this was written on, 621 million cached tokens
     /// against 2.7 million produced ones — and a bar drawn on the total would
-    /// be a bar about caching. Output is the part that was actually generated.
+    /// be a bar about caching. When there is no split to be had, the total is
+    /// the only honest denominator, and `basis` says so.
     func share(_ use: ModelUse) -> Double {
-        let total = totalOutput
-        guard total > 0 else { return 0 }
-        return Double(use.outputTokens) / Double(total)
+        let whole = isSplit ? totalOutput : totalTokens
+        guard whole > 0 else { return 0 }
+        return Double(isSplit ? use.outputTokens : use.totalTokens) / Double(whole)
     }
 }
 
@@ -124,23 +186,35 @@ enum ModelTally {
     ) -> ModelBreakdown {
         var input: [String: Int] = [:]
         var output: [String: Int] = [:]
+        var total: [String: Int] = [:]
+        var split = true
         for turn in turns where turn.at >= since {
             input[turn.model, default: 0] += turn.inputTokens
             output[turn.model, default: 0] += turn.outputTokens
+            total[turn.model, default: 0] += turn.totalTokens
+            if !turn.isSplit { split = false }
         }
-        let models = input.keys.map { model in
-            ModelUse(
-                model: model,
-                inputTokens: input[model] ?? 0,
-                outputTokens: output[model] ?? 0
-            )
+        let models = total.keys.map { model in
+            split
+                ? ModelUse(
+                    model: model,
+                    inputTokens: input[model] ?? 0,
+                    outputTokens: output[model] ?? 0
+                )
+                : ModelUse(model: model, totalTokens: total[model] ?? 0)
         }
+        // Ordered by whatever the bars are shares of, so the longest bar is
+        // always the top row. Sorting a split breakdown by total would sort it
+        // by cache reads, which is the one thing the bar deliberately is not
+        // about.
         .sorted {
-            $0.outputTokens != $1.outputTokens
-                ? $0.outputTokens > $1.outputTokens
-                : $0.model < $1.model
+            let a = split ? $0.outputTokens : $0.totalTokens
+            let b = split ? $1.outputTokens : $1.totalTokens
+            return a != b ? a > b : $0.model < $1.model
         }
-        return ModelBreakdown(window: window, models: models, observedAt: observedAt)
+        return ModelBreakdown(
+            window: window, models: models, observedAt: observedAt, isSplit: split
+        )
     }
 }
 

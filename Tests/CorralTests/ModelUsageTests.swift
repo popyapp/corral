@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import Corral
 
 final class ModelUsageTests: XCTestCase {
@@ -392,6 +393,139 @@ final class ModelUsageTests: XCTestCase {
         let file = try rollout([tokenCount(input: 100, cached: 0, output: 10)])
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         XCTAssertTrue(CodexModelTally.scan(file).isEmpty)
+    }
+
+    // ─ Codex's newer session store ──────────────────────────────────────────
+
+    /// Builds a state database of the shape Codex keeps, with only the columns
+    /// this reads. Written with the same SQLite that reads it, so the test is
+    /// about the query rather than about a fixture format.
+    private func makeStateDatabase(
+        _ rows: [(model: String, tokens: Int, atMs: Int64, rollout: String?)],
+        version: Int = 5,
+        extraDatabases: [Int] = []
+    ) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("corral-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        for name in [version] + extraDatabases {
+            let file = dir.appendingPathComponent("state_\(name).sqlite")
+            var handle: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(file.path, &handle), SQLITE_OK)
+            defer { sqlite3_close(handle) }
+            // The real table is far wider; these are the columns Corral names.
+            XCTAssertEqual(sqlite3_exec(handle, """
+                CREATE TABLE threads (id TEXT, model TEXT, tokens_used INTEGER,
+                                      updated_at_ms INTEGER, rollout_path TEXT,
+                                      first_user_message TEXT, git_branch TEXT);
+                """, nil, nil, nil), SQLITE_OK)
+            guard name == version else { continue }
+            for row in rows {
+                let rollout = row.rollout.map { "'\($0)'" } ?? "NULL"
+                XCTAssertEqual(sqlite3_exec(handle, """
+                    INSERT INTO threads VALUES ('t', '\(row.model)', \(row.tokens),
+                        \(row.atMs), \(rollout), 'private message', 'main');
+                    """, nil, nil, nil), SQLITE_OK)
+            }
+        }
+        return dir
+    }
+
+    /// The digit in `state_5.sqlite` is a schema version and has already moved
+    /// once. Naming one would mean going quiet on the next migration.
+    func testTheNewestStateDatabaseIsTheOneRead() throws {
+        let dir = try makeStateDatabase(
+            [(model: "gpt-5.6-terra", tokens: 500, atMs: 1_000_000, rollout: nil)],
+            version: 5, extraDatabases: [3, 4]
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(CodexThreads.database(under: dir)?.lastPathComponent, "state_5.sqlite")
+    }
+
+    func testNoStateDatabaseIsNotAnError() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("corral-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertNil(CodexThreads.database(under: dir))
+        XCTAssertTrue(CodexModelTally.sessionsWithoutARollout(under: dir, since: .distantPast).isEmpty)
+    }
+
+    /// A session that wrote a rollout is counted from the rollout, which has a
+    /// turn-by-turn split. Counting it from both would double it.
+    func testASessionWithARolloutOnDiskIsLeftToTheRollout() throws {
+        let rollout = try self.rollout([
+            turnContext("gpt-5.6-terra"),
+            tokenCount(input: 100, cached: 0, output: 10),
+        ])
+        defer { try? FileManager.default.removeItem(at: rollout.deletingLastPathComponent()) }
+
+        let now = Date()
+        let dir = try makeStateDatabase([
+            (model: "gpt-5.6-terra", tokens: 110, atMs: Int64(now.timeIntervalSince1970 * 1000),
+             rollout: rollout.path),
+            (model: "gpt-5.6-mini", tokens: 900, atMs: Int64(now.timeIntervalSince1970 * 1000),
+             rollout: "/gone/rollout-nowhere.jsonl"),
+        ])
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let extra = CodexModelTally.sessionsWithoutARollout(under: dir, since: .distantPast)
+        XCTAssertEqual(extra.map(\.model), ["gpt-5.6-mini"])
+        XCTAssertEqual(extra[0].totalTokens, 900)
+        XCTAssertFalse(extra[0].isSplit)
+    }
+
+    func testSessionsOutsideTheWindowAreNotAsked() throws {
+        let old = Date().addingTimeInterval(-30 * 86_400)
+        let dir = try makeStateDatabase([
+            (model: "gpt-5.6-terra", tokens: 900, atMs: Int64(old.timeIntervalSince1970 * 1000),
+             rollout: nil),
+        ])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertTrue(CodexModelTally.sessionsWithoutARollout(
+            under: dir, since: Date().addingTimeInterval(-7 * 86_400)
+        ).isEmpty)
+    }
+
+    // ─ When one source cannot split ─────────────────────────────────────────
+
+    /// Codex's database gives one figure per session and no table anywhere in
+    /// it separates input from output. A breakdown carrying even one such turn
+    /// is a breakdown about totals, and has to say so — adding an unsplit total
+    /// into an output column would draw a bar labelled "output" over a number
+    /// that is not output.
+    func testOneUnsplitTurnMakesTheWholeBreakdownAboutTotals() {
+        let turns = [
+            ModelTurn(at: now, model: "split-model", inputTokens: 900, outputTokens: 100),
+            ModelTurn(at: now, model: "total-model", totalTokens: 3000),
+        ]
+        let breakdown = ModelTally.breakdown(
+            of: turns, window: "7-day", since: .distantPast, observedAt: now
+        )
+        XCTAssertFalse(breakdown.isSplit)
+        XCTAssertEqual(breakdown.basis, "tokens")
+        XCTAssertEqual(breakdown.totalTokens, 4000)
+        // Ordered by the same quantity the bars show, so the longest bar is on
+        // top: by total here, not by the output one of them happens to have.
+        XCTAssertEqual(breakdown.models.map(\.model), ["total-model", "split-model"])
+        XCTAssertEqual(breakdown.share(breakdown.models[0]), 0.75, accuracy: 0.0001)
+    }
+
+    /// And with every source splitting, nothing changes from before: the bars
+    /// are shares of output, and the order follows them.
+    func testAnAllSplitBreakdownStaysAboutOutput() {
+        let turns = [
+            ModelTurn(at: now, model: "reads-a-lot", inputTokens: 1_000_000, outputTokens: 100),
+            ModelTurn(at: now, model: "writes-a-lot", inputTokens: 10, outputTokens: 300),
+        ]
+        let breakdown = ModelTally.breakdown(
+            of: turns, window: "7-day", since: .distantPast, observedAt: now
+        )
+        XCTAssertTrue(breakdown.isSplit)
+        XCTAssertEqual(breakdown.basis, "output")
+        XCTAssertEqual(breakdown.models.map(\.model), ["writes-a-lot", "reads-a-lot"])
+        XCTAssertEqual(breakdown.share(breakdown.models[0]), 0.75, accuracy: 0.0001)
     }
 
     // ─ Reading files backwards ──────────────────────────────────────────────

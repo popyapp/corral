@@ -386,7 +386,11 @@ private struct ModelBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Output by model")
+                // "Output" or "Tokens", from the data rather than assumed:
+                // Codex's database reports one figure per session with no split
+                // in it, and a heading promising output would be describing a
+                // number that is not output.
+                Text("\(breakdown.basis.capitalized) by model")
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(HUD.primary)
                 Spacer()
@@ -419,7 +423,9 @@ private struct ModelBlock: View {
                         .foregroundStyle(HUD.primary)
                         .frame(width: 34, alignment: .trailing)
                 }
-                .help("\(use.model): \(use.outputSummary) out, \(use.inputSummary) in")
+                .help(breakdown.isSplit
+                      ? "\(use.model): \(use.outputSummary) out, \(use.inputSummary) in"
+                      : "\(use.model): \(ModelUse.compact(use.totalTokens)) tokens")
             }
 
             if breakdown.models.count > Self.shown {

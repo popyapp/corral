@@ -177,6 +177,17 @@ It is a share of **output**, and it is labelled as one. Input is mostly cache
 reads — 621 million of them against 2.7 million produced tokens, on the machine
 this was written on — so a bar drawn on the total would be a bar about caching.
 
+Codex is read from two places. Its rollout logs give a turn-by-turn split and
+are used wherever they exist; alongside them it now keeps a SQLite database with
+a row per session, and that is read for sessions no rollout file describes. The
+database is opened read-only, and only the four columns this needs are named —
+the same table holds the first message of every session, its title and its git
+branch. It reports one figure per session with no split anywhere in it, so a
+breakdown that draws on it is about **tokens** rather than output and says
+`Tokens by model` instead. Codex keeps a `rollout_migration_state` table of its
+own, which is it saying the JSONL files are on their way out; when that day
+comes, this keeps working.
+
 A *limit* per model is a different thing, and it is not available. Claude Code
 does track `seven_day_opus` and `seven_day_sonnet`, but writes neither to disk
 nor to its status line; every limit Codex reports is stamped `limit_id: "codex"`

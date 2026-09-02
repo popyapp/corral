@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 /// Finding Codex's rollout logs.
 ///
@@ -156,6 +157,101 @@ extension CodexRollouts {
     }
 }
 
+/// Codex's newer session store.
+///
+/// Rollout files are not the whole picture any more. Alongside them Codex keeps
+/// a SQLite database with a row per session — the model, the tokens, when it
+/// was last touched — and it carries a `rollout_migration_state` table, which
+/// is Codex's own record that the JSONL files are on their way out. That table
+/// is empty today and the two sources agree exactly: the same two sessions,
+/// 475,858 and 129,099 tokens, matching the rollouts to the token. The day the
+/// migration runs, a reader that only knows about rollouts goes quiet without
+/// failing, which is the worst way for a thing to stop working.
+///
+/// What it cannot give is a split. `tokens_used` is one number, and no table in
+/// any of Codex's databases separates input from output — so anything built on
+/// this is honestly about totals, and says so rather than filling in an output
+/// figure it does not have.
+enum CodexThreads {
+
+    struct Session {
+        let model: String
+        let tokens: Int
+        let at: Date
+        /// The rollout this session also wrote, when it wrote one.
+        let rollout: String?
+    }
+
+    /// The newest state database under Codex's directory.
+    ///
+    /// The digit in `state_5.sqlite` is a schema version and it has already
+    /// moved; naming one here would mean going quiet on the next migration,
+    /// which is the exact failure this file exists to avoid.
+    static func database(under root: URL) -> URL? {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: root.path)
+        else { return nil }
+        let versioned = names.compactMap { name -> (Int, String)? in
+            guard name.hasPrefix("state_"), name.hasSuffix(".sqlite"),
+                  let version = Int(name.dropFirst(6).dropLast(7))
+            else { return nil }
+            return (version, name)
+        }
+        guard let newest = versioned.max(by: { $0.0 < $1.0 }) else { return nil }
+        return root.appendingPathComponent(newest.1)
+    }
+
+    /// Sessions touched since a cutoff.
+    ///
+    /// Opened read-only, and that is not a detail. Codex may be writing to this
+    /// file at the moment it is read; Corral's business here is to look. The
+    /// columns are named one by one for the same reason — the table also holds
+    /// the first message of every session, its title, the branch and the origin
+    /// URL, and none of that is any of Corral's business either.
+    static func sessions(in file: URL, since cutoff: Date) -> [Session] {
+        var handle: OpaquePointer?
+        guard sqlite3_open_v2(file.path, &handle, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(handle)
+            return []
+        }
+        defer { sqlite3_close(handle) }
+        // A moment's patience if Codex is mid-write, then give up. A usage
+        // panel is not worth blocking a refresh over.
+        //
+        // Read-only and a live writer are compatible here, which was worth
+        // checking rather than hoping: a connection opened this way reads rows
+        // sitting in an uncheckpointed write-ahead log while the writer still
+        // holds its own connection open. Measured, because the case it covers —
+        // Codex running — is the case that matters, and the failure would have
+        // been an empty panel rather than an error.
+        sqlite3_busy_timeout(handle, 200)
+
+        var statement: OpaquePointer?
+        let sql = """
+            SELECT model, tokens_used, updated_at_ms, rollout_path FROM threads
+            WHERE updated_at_ms >= ? AND tokens_used > 0
+            """
+        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK else {
+            sqlite3_finalize(statement)
+            return []
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, Int64(cutoff.timeIntervalSince1970 * 1000))
+
+        var found: [Session] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let model = sqlite3_column_text(statement, 0) else { continue }
+            let rollout = sqlite3_column_text(statement, 3).map { String(cString: $0) }
+            found.append(Session(
+                model: String(cString: model),
+                tokens: Int(sqlite3_column_int64(statement, 1)),
+                at: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 2)) / 1000),
+                rollout: rollout
+            ))
+        }
+        return found
+    }
+}
+
 /// Counts Codex's rollouts into per-model totals.
 ///
 /// Codex writes the model per *turn* rather than per session — `turn_context`
@@ -174,14 +270,23 @@ extension CodexRollouts {
 final class CodexModelTally {
 
     private let root: URL
+    private let state: URL
     private var byFile: [String: [ModelTurn]] = [:]
     private var sizes: [String: UInt64] = [:]
 
-    init(root: URL = CodexRollouts.defaultRoot) {
+    /// Sessions the rollouts did not account for. Not cached between passes:
+    /// there are a handful of rows and the query is a millisecond, where the
+    /// rollout files are the thing worth remembering a position in.
+    private var unrolled: [ModelTurn] = []
+
+    /// `root` is where the rollouts are, `state` the directory above it, which
+    /// is where Codex keeps its databases.
+    init(root: URL = CodexRollouts.defaultRoot, state: URL? = nil) {
         self.root = root
+        self.state = state ?? root.deletingLastPathComponent()
     }
 
-    var turns: [ModelTurn] { byFile.values.flatMap { $0 } }
+    var turns: [ModelTurn] { byFile.values.flatMap { $0 } + unrolled }
 
     func refresh(now: Date = Date(), horizon: TimeInterval = 7 * 86_400) {
         let cutoff = now.addingTimeInterval(-horizon)
@@ -197,6 +302,25 @@ final class CodexModelTally {
 
         byFile = byFile.filter { live.contains($0.key) }
         sizes = sizes.filter { live.contains($0.key) }
+        unrolled = Self.sessionsWithoutARollout(under: state, since: cutoff)
+    }
+
+    /// Sessions from the database that no rollout file describes.
+    ///
+    /// A session that wrote a rollout is counted from it and not from here: the
+    /// rollout has a turn-by-turn split, this has one total for the whole
+    /// thread pinned to the moment it was last touched. Better information wins
+    /// where there is any, and the existence of the file is the test — if it is
+    /// on disk it is either already counted or already outside the window, and
+    /// in both cases the row would be a duplicate.
+    static func sessionsWithoutARollout(under state: URL, since cutoff: Date) -> [ModelTurn] {
+        guard let database = CodexThreads.database(under: state) else { return [] }
+        return CodexThreads.sessions(in: database, since: cutoff)
+            .filter { session in
+                guard let rollout = session.rollout else { return true }
+                return !FileManager.default.fileExists(atPath: rollout)
+            }
+            .map { ModelTurn(at: $0.at, model: $0.model, totalTokens: $0.tokens) }
     }
 
     /// One rollout, forwards.
