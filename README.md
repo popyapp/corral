@@ -166,6 +166,25 @@ Every figure carries the date the tool wrote it. They are a by-product of the
 last turn an agent took, so a tool you have not run this week reports a
 week-old percentage, and one shown bare would read as current.
 
+### Which models
+
+Under the allowance, the same panel says which models did the spending, over
+the last five hours and the last seven days. That one is counted rather than
+reported: every assistant turn in a session log names the model that produced
+it and the tokens it took, so the arithmetic is Corral's own.
+
+It is a share of **output**, and it is labelled as one. Input is mostly cache
+reads — 621 million of them against 2.7 million produced tokens, on the machine
+this was written on — so a bar drawn on the total would be a bar about caching.
+
+A *limit* per model is a different thing, and it is not available. Claude Code
+does track `seven_day_opus` and `seven_day_sonnet`, but writes neither to disk
+nor to its status line; every limit Codex reports is stamped `limit_id: "codex"`
+with no model in it. The vendors also weight models against each other in ways
+nothing local can see, so a model with 40% of the output has not necessarily
+taken 40% of the week — and Corral does not say it has. Reading those would
+mean asking the vendor's servers, and the line below would stop being true.
+
 Still no network. These are files the tools put on your machine.
 
 ## What it costs to run
@@ -179,6 +198,16 @@ tick, which allocates a megabyte a time, and cost 17% of a core. The fix is that
 almost nothing about a process changes: its path, its arguments, its terminal
 and what tool it belongs to are all fixed at birth, so they are asked once and
 cached against the pid and its start time. Only memory and CPU are re-read.
+
+Counting a week of transcripts for the per-model figures is a different size of
+job — 296 MB of session logs on this machine — and it never runs on that timer
+or on that thread. Transcripts nobody has written to in a week are not opened;
+the rest are read backwards from the end and abandoned as soon as the week runs
+out, which is 82 MB rather than 296 MB; and after the first pass each file is
+read from where the last one stopped. That is **~3 s** once, in the background,
+and **~30 ms** every refresh after it. Written the obvious way — `Data` split by
+`Collection.split`, which walks it a byte at a time through the protocol — the
+same pass took over four minutes.
 
 ## On disk
 

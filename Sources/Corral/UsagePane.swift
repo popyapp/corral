@@ -21,6 +21,7 @@ struct UsagePane: View {
                 } else {
                     rings
                     allowances
+                    models
                     contexts
                 }
             }
@@ -64,6 +65,32 @@ struct UsagePane: View {
         VStack(alignment: .leading, spacing: 10) {
             PaneLabel("Allowance")
             ForEach(model.vendorUsages) { AllowancePanel(usage: $0) }
+        }
+    }
+
+    // ─ Models ───────────────────────────────────────────────────────────────
+
+    private var models: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PaneLabel("Models")
+            let vendors = model.vendorUsages.filter { !$0.breakdowns.isEmpty }
+            if vendors.isEmpty {
+                // Two different nothings, and they call for different words. For
+                // the first seconds after launch the count is simply not in yet;
+                // once it is, an empty list means nothing has run. Saying
+                // "counting" to someone with no session logs would be a promise
+                // that is never kept.
+                Text(model.hasCountedModels
+                     ? "No session in the last seven days has recorded which "
+                       + "model did the work."
+                     : "Counting what each model has done. This reads a week of "
+                       + "session logs and takes a moment on the first refresh.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(vendors) { ModelPanel(usage: $0) }
+            }
         }
     }
 
@@ -251,6 +278,113 @@ private struct PaneLimitRow: View {
         formatter.timeStyle = .short
         return formatter
     }()
+}
+
+/// What each model produced, over the same spans the allowances are measured in.
+///
+/// Under the allowance panel and never inside it. The numbers above come from
+/// the vendor and describe an allowance; these are counted off this machine's
+/// own session logs and describe work. They are related — the work is what
+/// spent the allowance — but the vendors weight models against one another in
+/// ways nothing here can see, so the share below is a share of tokens produced
+/// and is labelled as one. Reading it as "38% of my week" would be wrong, and
+/// the caption is the only thing standing between a reader and that mistake.
+private struct ModelPanel: View {
+    let usage: VendorUsage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                ToolGlyph(tool: usage.tool, size: 15)
+                Text(usage.name)
+                    .font(.system(size: 12.5, weight: .medium))
+                Spacer()
+                Text("share of output, counted from session logs")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.faint)
+            }
+
+            ForEach(usage.breakdowns, id: \.window) { breakdown in
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Text(Self.span(breakdown.window))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Theme.subtle)
+                        Spacer()
+                        Text("\(ModelUse.compact(breakdown.totalOutput)) produced")
+                            .font(.system(size: 10.5))
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.faint)
+                    }
+                    ForEach(breakdown.models) { use in
+                        ModelRow(
+                            use: use,
+                            share: breakdown.share(use),
+                            tint: Theme.accent(for: usage.tool)
+                        )
+                    }
+                }
+            }
+        }
+        .padding(13)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.rowCorner, style: .continuous)
+                .fill(Theme.rowBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.rowCorner, style: .continuous)
+                .strokeBorder(Theme.hairline, lineWidth: 1)
+        )
+    }
+
+    /// The window in the words someone would use for it.
+    private static func span(_ window: String) -> String {
+        switch window {
+        case "5-hour": return "Last 5 hours"
+        case "7-day": return "Last 7 days"
+        default: return window
+        }
+    }
+}
+
+private struct ModelRow: View {
+    let use: ModelUse
+    let share: Double
+    /// The vendor's own colour. Hardcoding Claude's here made every Codex row
+    /// claim to be a Claude one.
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(use.shortName)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                // Middle, so both the family and a trailing `[1m]` survive.
+                .truncationMode(.middle)
+                .frame(width: 170, alignment: .leading)
+
+            Meter(
+                fraction: share,
+                tint: tint.opacity(0.8),
+                height: 5,
+                track: Color.primary.opacity(0.09)
+            )
+            .frame(maxWidth: .infinity)
+
+            Text("\(use.outputSummary) out · \(use.inputSummary) in")
+                .font(.system(size: 10.5))
+                .monospacedDigit()
+                .foregroundStyle(Theme.faint)
+                .frame(width: 130, alignment: .trailing)
+
+            Text(String(format: "%.0f%%", (share * 100).rounded()))
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .frame(width: 40, alignment: .trailing)
+        }
+        .help("\(use.model)\n\(use.outputTokens) tokens produced\n"
+              + "\(use.inputTokens) read, cache included")
+    }
 }
 
 private struct PaneContextRow: View {

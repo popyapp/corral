@@ -60,3 +60,122 @@ final class UsageStore {
         Tool.allCases.compactMap { current[$0] }
     }
 }
+
+/// Per-model breakdowns, computed away from the main thread.
+///
+/// Separate from `UsageStore` because of what it costs. An account limit is one
+/// small file read to its end; a model breakdown is arithmetic over every
+/// transcript touched in the last week — 82 MB of the 296 MB those files
+/// occupy, on the machine this was written on. The list refreshes on a two
+/// second timer on the main thread, and a scan like that there is a visible
+/// freeze.
+///
+/// So this never computes anything on the caller's thread. `refresh` starts a
+/// pass if one is due and returns; readers get whatever the last completed pass
+/// produced, which for the first second or two after launch is nothing. That is
+/// the honest state rather than a stalled window: the panel simply has no rows
+/// to draw yet.
+///
+/// The tallies underneath keep the incremental state that makes later passes
+/// cheap, and are touched only by the worker — one pass at a time, which
+/// `working` enforces.
+final class ModelUsageStore {
+
+    /// The spans reported, whatever windows a vendor happens to meter.
+    ///
+    /// Five hours and seven days for everyone, and deliberately not derived
+    /// from the limits sitting above them. Codex meters a 30-day window, and
+    /// following it would mean keeping a month of transcripts in memory to fill
+    /// one row. These are a companion to the limits — what you have been
+    /// spending, by model — not a decomposition of them, which is a thing no
+    /// local data can produce.
+    static let windows = [300, 10_080]
+
+    private let ttl: TimeInterval
+    private let queue = DispatchQueue(label: "app.popy.corral.model-usage", qos: .utility)
+    private let lock = NSLock()
+
+    private let claude: ClaudeModelTally
+    private let codex: CodexModelTally
+
+    private var current: [Tool: [ModelBreakdown]] = [:]
+    private var computedAt: Date = .distantPast
+    private var working = false
+
+    /// Whether a pass has ever finished.
+    ///
+    /// Not the same question as whether there is anything to show, and the
+    /// panel needs both: for the first seconds after launch an empty result
+    /// means "still counting", and after that it means "nothing has run".
+    /// Telling someone with no session logs that Corral is still counting
+    /// would be a promise it never keeps.
+    private var counted = false
+
+    init(
+        claude: ClaudeModelTally = ClaudeModelTally(),
+        codex: CodexModelTally = CodexModelTally(),
+        ttl: TimeInterval = 90
+    ) {
+        self.claude = claude
+        self.codex = codex
+        self.ttl = ttl
+    }
+
+    func refresh(now: Date = Date()) {
+        lock.lock()
+        let due = !working && now.timeIntervalSince(computedAt) >= ttl
+        if due { working = true }
+        lock.unlock()
+        guard due else { return }
+
+        queue.async { [self] in
+            let horizon = TimeInterval(Self.windows.max() ?? 10_080) * 60
+            claude.refresh(now: now, horizon: horizon)
+            codex.refresh(now: now, horizon: horizon)
+
+            var next: [Tool: [ModelBreakdown]] = [:]
+            next[.claudeCode] = Self.breakdowns(of: claude.turns, now: now)
+            next[.codex] = Self.breakdowns(of: codex.turns, now: now)
+
+            lock.lock()
+            current = next.filter { !$0.value.isEmpty }
+            computedAt = Date()
+            working = false
+            counted = true
+            lock.unlock()
+        }
+    }
+
+    /// One breakdown per window, and only the windows that saw work. A row
+    /// reading "5-hour: nothing" is noise next to one that has something in it.
+    private static func breakdowns(of turns: [ModelTurn], now: Date) -> [ModelBreakdown] {
+        windows.compactMap { minutes in
+            let breakdown = ModelTally.breakdown(
+                of: turns,
+                window: UsageWindow.label(minutes: minutes),
+                since: now.addingTimeInterval(-TimeInterval(minutes) * 60),
+                observedAt: now
+            )
+            return breakdown.isEmpty ? nil : breakdown
+        }
+    }
+
+    func breakdowns(for tool: Tool) -> [ModelBreakdown] {
+        lock.lock()
+        defer { lock.unlock() }
+        return current[tool] ?? []
+    }
+
+    /// Everything, for the vendor grouping the rail does.
+    var all: [Tool: [ModelBreakdown]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return current
+    }
+
+    var hasCounted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return counted
+    }
+}

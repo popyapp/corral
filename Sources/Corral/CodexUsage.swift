@@ -131,3 +131,112 @@ enum CodexContext {
         return ContextUse(usedTokens: used, windowTokens: window, windowIsCertain: true)
     }
 }
+
+// ─ Which models did the work ────────────────────────────────────────────────
+
+extension CodexRollouts {
+
+    /// Rollouts written to inside a window, with their sizes.
+    static func changed(since cutoff: Date, under root: URL) -> [(URL, UInt64)] {
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+        guard let walker = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var found: [(URL, UInt64)] = []
+        for case let url as URL in walker
+        where url.pathExtension == "jsonl" && url.lastPathComponent.hasPrefix("rollout-") {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)),
+                  let at = values.contentModificationDate, at >= cutoff,
+                  let size = values.fileSize
+            else { continue }
+            found.append((url, UInt64(size)))
+        }
+        return found
+    }
+}
+
+/// Counts Codex's rollouts into per-model totals.
+///
+/// Codex writes the model per *turn* rather than per session — `turn_context`
+/// carries it, and `/model` mid-session changes it — so attribution is a matter
+/// of reading forwards and remembering the last one seen. The tokens come from
+/// the `token_count` event that follows: its `last_token_usage` is that turn's
+/// own consumption, where `total_token_usage` is the session's running sum and
+/// would count every earlier turn again on every later one. Summing the deltas
+/// reproduces the session total exactly — checked against both rollouts on the
+/// machine this was written on, 129,099 and 475,858 tokens, to the token.
+///
+/// Simpler than the Claude side and allowed to be. Rollouts are one file per
+/// session and a few hundred kilobytes each, so a changed file is re-read whole
+/// rather than from a remembered offset, and there are no duplicate records to
+/// reconcile.
+final class CodexModelTally {
+
+    private let root: URL
+    private var byFile: [String: [ModelTurn]] = [:]
+    private var sizes: [String: UInt64] = [:]
+
+    init(root: URL = CodexRollouts.defaultRoot) {
+        self.root = root
+    }
+
+    var turns: [ModelTurn] { byFile.values.flatMap { $0 } }
+
+    func refresh(now: Date = Date(), horizon: TimeInterval = 7 * 86_400) {
+        let cutoff = now.addingTimeInterval(-horizon)
+        var live: Set<String> = []
+
+        for (url, size) in CodexRollouts.changed(since: cutoff, under: root) {
+            let path = url.path
+            live.insert(path)
+            guard sizes[path] != size else { continue }
+            byFile[path] = Self.scan(url).filter { $0.at >= cutoff }
+            sizes[path] = size
+        }
+
+        byFile = byFile.filter { live.contains($0.key) }
+        sizes = sizes.filter { live.contains($0.key) }
+    }
+
+    /// One rollout, forwards.
+    ///
+    /// A `token_count` before any `turn_context` cannot be attributed to a
+    /// model, and is dropped rather than filed under a guess. It does not
+    /// happen in practice — the turn context is written when the turn opens —
+    /// but a row invented for it would be indistinguishable from a real one.
+    static func scan(_ url: URL) -> [ModelTurn] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+
+        var model: String?
+        var turns: [ModelTurn] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let data = line.data(using: .utf8),
+                  let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let payload = record["payload"] as? [String: Any]
+            else { continue }
+
+            if record["type"] as? String == "turn_context",
+               let named = payload["model"] as? String, !named.isEmpty {
+                model = named
+            }
+
+            guard payload["type"] as? String == "token_count",
+                  let model,
+                  let at = ClaudeSessionActivityReader.timestamp(record["timestamp"]),
+                  let info = payload["info"] as? [String: Any],
+                  let last = info["last_token_usage"] as? [String: Any]
+            else { continue }
+
+            // `input_tokens` already contains the cached portion — the sample
+            // this was written against reports 29,363 in with 28,416 of them
+            // cached, and a total of 29,490 for 127 out. Adding the cached
+            // figure again would count most of the turn twice.
+            let input = JSONNumber.int(last["input_tokens"]) ?? 0
+            let output = JSONNumber.int(last["output_tokens"]) ?? 0
+            guard input > 0 || output > 0 else { continue }
+            turns.append(ModelTurn(at: at, model: model, inputTokens: input, outputTokens: output))
+        }
+        return turns
+    }
+}

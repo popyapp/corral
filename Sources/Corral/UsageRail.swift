@@ -232,6 +232,15 @@ struct UsagePopoverView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            if let week = usage.breakdowns.first(where: { $0.window == "7-day" }) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.09))
+                    .frame(height: 1)
+                    .padding(.vertical, 12)
+
+                ModelBlock(breakdown: week)
+            }
+
             if !usage.sessions.isEmpty {
                 Rectangle()
                     .fill(Color.white.opacity(0.09))
@@ -359,6 +368,67 @@ private struct LimitBlock: View {
         formatter.timeStyle = .short
         return formatter
     }()
+}
+
+/// Which models did the work, under the allowance they were spent against.
+///
+/// Sits below the limits on purpose and is worded to stay clearly separate from
+/// them. A limit is the vendor's arithmetic over an allowance; these are tokens
+/// counted off this machine, and the vendors weight models against each other
+/// in ways nothing local can see — so a model with 40% of the output has not
+/// necessarily taken 40% of the week. "of output" is the whole caption, and it
+/// is the honest one.
+private struct ModelBlock: View {
+    let breakdown: ModelBreakdown
+
+    private static let shown = 4
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Output by model")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(HUD.primary)
+                Spacer()
+                Text("last 7 days")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(HUD.secondary)
+            }
+
+            ForEach(breakdown.models.prefix(Self.shown)) { use in
+                HStack(spacing: 8) {
+                    Text(use.shortName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(HUD.secondary)
+                        .lineLimit(1)
+                        // Middle, not tail: the `[1m]` at the end of a name is
+                        // the difference between a 200K window and a 1M one.
+                        .truncationMode(.middle)
+                        .frame(width: 104, alignment: .leading)
+
+                    Meter(
+                        fraction: breakdown.share(use),
+                        tint: HUD.primary.opacity(0.55),
+                        height: 4
+                    )
+                    .frame(maxWidth: .infinity)
+
+                    Text(String(format: "%.0f%%", (breakdown.share(use) * 100).rounded()))
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(HUD.primary)
+                        .frame(width: 34, alignment: .trailing)
+                }
+                .help("\(use.model): \(use.outputSummary) out, \(use.inputSummary) in")
+            }
+
+            if breakdown.models.count > Self.shown {
+                Text("and \(breakdown.models.count - Self.shown) more")
+                    .font(.system(size: 10))
+                    .foregroundStyle(HUD.faint)
+            }
+        }
+    }
 }
 
 /// One agent underneath the vendor: which project, how full, what it is doing.

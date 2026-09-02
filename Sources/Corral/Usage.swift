@@ -69,6 +69,14 @@ struct VendorUsage: Identifiable {
     let account: ToolUsage?
     let sessions: [(group: AgentGroup, use: ContextUse)]
 
+    /// Which models did the spending, per window.
+    ///
+    /// A companion to `account`, never a decomposition of it. The limits above
+    /// are the vendor's own arithmetic over an allowance nothing here can see;
+    /// these are tokens counted off this machine's transcripts. They answer
+    /// different questions and the panel is required to keep them apart.
+    var breakdowns: [ModelBreakdown] = []
+
     var id: String { tool.vendor }
     var name: String { tool.vendor }
 

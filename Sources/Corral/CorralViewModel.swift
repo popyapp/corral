@@ -128,6 +128,8 @@ final class CorralViewModel: ObservableObject {
     /// What each account has left, as of the last time that tool wrote it down.
     var accountUsages: [ToolUsage] { inventory.accountUsages }
 
+    var hasCountedModels: Bool { inventory.hasCountedModels }
+
     /// Everything Corral knows about one vendor, gathered for the rail.
     ///
     /// Grouped by vendor rather than by tool because the account is the vendor's:
@@ -142,6 +144,10 @@ final class CorralViewModel: ObservableObject {
         for row in contexts {
             sessions[row.group.root.tool.vendor, default: []].append(row)
         }
+        let breakdowns = Dictionary(
+            inventory.modelBreakdowns.map { ($0.key.vendor, $0.value) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         // Every vendor that is either running something or has an allowance we
         // can read. A vendor doing neither has nothing to put in a ring.
@@ -164,7 +170,8 @@ final class CorralViewModel: ObservableObject {
             let usage = VendorUsage(
                 tool: tool,
                 account: accounts[vendor],
-                sessions: sessions[vendor] ?? []
+                sessions: sessions[vendor] ?? [],
+                breakdowns: breakdowns[vendor] ?? []
             )
             // A vendor with neither a limit nor a measurable conversation would
             // be an empty ring, which reads as "nothing used" rather than

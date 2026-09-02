@@ -38,6 +38,11 @@ final class AgentInventory {
     /// Each tool's account-level allowance, on its own slower clock.
     private let usages = UsageStore()
 
+    /// Which models did the work, on a slower clock still and never on this
+    /// thread — see `ModelUsageStore` for why counting a week of transcripts
+    /// cannot happen on a two-second timer.
+    private let modelUsages = ModelUsageStore()
+
     /// Claude Code's own pid-to-session index, which beats reading the id out
     /// of a child's environment on every count that matters.
     private let claudeSessions = ClaudeSessionRegistry()
@@ -181,6 +186,7 @@ final class AgentInventory {
         sessionIdCache = sessionIdCache.filter { liveProcesses.contains($0.key) }
         sessionActivities.refresh(built, sessionId: sessionId(for:), now: now)
         usages.refresh(now: now)
+        modelUsages.refresh(now: now)
         groups = built.sorted {
             // Longest-running first: the thing you forgot about is the thing
             // you came here to find.
@@ -343,6 +349,12 @@ final class AgentInventory {
     func accountUsage(for tool: Tool) -> ToolUsage? { usages.usage(for: tool) }
 
     var accountUsages: [ToolUsage] { usages.all }
+
+    var modelBreakdowns: [Tool: [ModelBreakdown]] { modelUsages.all }
+
+    /// Whether the model count has finished a pass, which is a different
+    /// question from whether it found anything.
+    var hasCountedModels: Bool { modelUsages.hasCounted }
 
     /// Which session this Claude Code process is running.
     ///

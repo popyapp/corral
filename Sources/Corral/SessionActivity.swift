@@ -47,6 +47,112 @@ enum FileTail {
         return lines.reversed()
     }
 
+    /// A block of bytes cut at its newlines, as slices that share its storage.
+    ///
+    /// `Data.split(separator:)` is the obvious way to write this and is the
+    /// reason an early version of the model tally took four minutes. `Data`
+    /// conforms to `Collection`, so the generic `split` walks it one byte at a
+    /// time through that abstraction; measured over the transcripts on this
+    /// machine it managed 17 MB/s, which for data already in the page cache is
+    /// two orders of magnitude off. `memchr` on the raw buffer does the same
+    /// job at memory speed.
+    ///
+    /// A trailing empty slice, from a block that ends in a newline, is left in:
+    /// callers filter it, and dropping it here would hide whether the block was
+    /// terminated.
+    static func split(_ data: Data) -> [Data] {
+        guard !data.isEmpty else { return [] }
+        var bounds: [Int] = []
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            var from = 0
+            while from < raw.count {
+                guard let hit = memchr(base + from, 0x0A, raw.count - from) else { break }
+                let at = UnsafeRawPointer(hit) - base
+                bounds.append(at)
+                from = at + 1
+            }
+        }
+
+        var lines: [Data] = []
+        lines.reserveCapacity(bounds.count + 1)
+        var start = data.startIndex
+        for offset in bounds {
+            let end = data.startIndex + offset
+            lines.append(data[start..<end])
+            start = end + 1
+        }
+        lines.append(data[start...])
+        return lines
+    }
+
+    /// The lines of a file, newest first, without ever holding more than a
+    /// chunk of it — and without turning any of it into a `String`.
+    ///
+    /// For counting rather than glancing. `lines(of:limit:)` above answers
+    /// "what happened last" by decoding a window at the end, and that is the
+    /// right shape for a window that stays small. Adding up a week of
+    /// transcripts is a different job: the answer is spread over tens of
+    /// megabytes, the caller stops as soon as it reads back past its own
+    /// horizon, and how far back that is cannot be known before looking.
+    ///
+    /// So this walks backwards a chunk at a time and hands over one line at a
+    /// time, as bytes. `JSONSerialization` takes `Data` directly, so a caller
+    /// that only wants to parse never pays to build a string it would throw
+    /// away — which on this corpus is most of them.
+    ///
+    /// Returning `true` from `each` stops the walk.
+    static func backwards(
+        of url: URL,
+        chunk: Int = 4 << 20,
+        each: (Data) -> Bool
+    ) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? handle.close() }
+        guard var upper = try? handle.seekToEnd() else { return }
+
+        // A line that begins before the chunk we are holding. Kept and glued to
+        // the front of the next read rather than parsed in half.
+        var carry = Data()
+
+        while upper > 0 {
+            let lower = upper > UInt64(chunk) ? upper - UInt64(chunk) : 0
+            guard (try? handle.seek(toOffset: lower)) != nil,
+                  var data = try? handle.read(upToCount: Int(upper - lower))
+            else { return }
+            if !carry.isEmpty { data.append(carry) }
+
+            var lines = split(data)
+            // At the start of the file there is nothing earlier for the first
+            // line to be a continuation of.
+            carry = lower > 0 && !lines.isEmpty ? Data(lines.removeFirst()) : Data()
+
+            for line in lines.reversed() where !line.isEmpty {
+                if each(line) { return }
+            }
+            upper = lower
+        }
+    }
+
+    /// Whatever has been appended to a file since it was last read, as lines of
+    /// bytes. The counterpart to `backwards` for a file already seen once.
+    static func appendedLines(to url: URL, after offset: UInt64) -> (lines: [Data], next: UInt64) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return ([], offset) }
+        defer { try? handle.close() }
+        guard let end = try? handle.seekToEnd() else { return ([], offset) }
+
+        let start = end < offset ? 0 : offset
+        guard end > start,
+              (try? handle.seek(toOffset: start)) != nil,
+              let data = try? handle.readToEnd(),
+              let lastBreak = data.lastIndex(of: 0x0A)
+        else { return ([], start) }
+
+        let complete = data[..<data.index(after: lastBreak)]
+        let next = start + UInt64(complete.count)
+        return (split(Data(complete)).filter { !$0.isEmpty }, next)
+    }
+
     /// The first line of a file, for logs that record what a session *is* in
     /// their opening entry and what it is *doing* at the far end.
     static func firstLine(of url: URL, limit: Int = 16 * 1024) -> String? {
