@@ -28,6 +28,7 @@ enum Pane: String, CaseIterable, Identifiable {
 struct RootView: View {
     @EnvironmentObject private var model: CorralViewModel
     @EnvironmentObject private var disk: DiskViewModel
+    @Environment(\.openWindow) private var openWindow
     @State private var pane: Pane = .agents
 
     var body: some View {
@@ -53,7 +54,12 @@ struct RootView: View {
         }
         // A running version must never be offered for deletion, so the disk
         // side is told what the agent side can see.
-        .onAppear { disk.runningVersions = model.runningVersions }
+        .onAppear {
+            disk.runningVersions = model.runningVersions
+            // The one way to make this window again after it has been closed
+            // and the app has left the Dock. See `AppState.openWindow`.
+            AppState.shared.windowOpener = { openWindow(id: AppState.mainWindow) }
+        }
         .onChange(of: model.runningVersions) { disk.runningVersions = $0 }
     }
 }

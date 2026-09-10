@@ -60,7 +60,7 @@ struct CorralApp: App {
     @ObservedObject private var kiroAccount = KiroAccountSettings.shared
 
     var body: some Scene {
-        WindowGroup("Corral") {
+        WindowGroup("Corral", id: AppState.mainWindow) {
             RootView()
                 .environmentObject(AppState.shared.agents)
                 .environmentObject(AppState.shared.disk)
@@ -132,6 +132,43 @@ final class AppState {
     static let shared = AppState()
     let agents = CorralViewModel()
     let disk = DiskViewModel()
+
+    static let mainWindow = "main"
+
+    /// SwiftUI's own way of opening the window, handed over by the root view
+    /// the first time it appears. See `openWindow(selecting:)` for why the
+    /// AppKit way is not enough.
+    var windowOpener: (() -> Void)?
+
+    /// Bring the window back, from wherever it was asked for — the menu bar
+    /// item, a double-click on the rail, a row in the status menu.
+    ///
+    /// The app may be out of the Dock by now (see
+    /// `applicationShouldTerminateAfterLastWindowClosed`), so the tile comes
+    /// back first. An existing window is ordered front. A closed one has to
+    /// be made again, and `newWindowForTab:` — which did that while the app
+    /// stayed in the Dock — goes nowhere once it has left: the responder
+    /// chain it travels has no window in it. SwiftUI's `openWindow` action
+    /// creates the scene's window directly, so that is what is used, with
+    /// the old action as the fallback for a launch where no view has handed
+    /// it over yet. Activation waits a turn of the run loop, because a policy
+    /// change and an activation in the same breath lose the activation.
+    func openWindow(selecting pid: pid_t? = nil) {
+        if let pid { agents.selection = pid }
+        NSApp.setActivationPolicy(.regular)
+        if let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }) {
+            window.makeKeyAndOrderFront(nil)
+        } else if let windowOpener {
+            windowOpener()
+        } else {
+            NSApp.sendAction(#selector(NSApplication.newWindowForTab(_:)), to: nil, from: nil)
+        }
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible })?
+                .makeKeyAndOrderFront(nil)
+        }
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

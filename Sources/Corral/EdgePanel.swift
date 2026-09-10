@@ -275,6 +275,16 @@ final class EdgePanelController {
         hover(index)
     }
 
+    /// A double-click on the rail is the one gesture it has left to give, and
+    /// "show me the whole thing" is what it should mean. The first click of
+    /// the pair pinned a popover; that is undone, the rail closes, and the
+    /// window comes up — out of the Dock or not.
+    private func openWindowFromRail() {
+        pinned = nil
+        collapseRail()
+        AppState.shared.openWindow()
+    }
+
     private func show(ring index: Int?) {
         guard anchor.isRail, let index else { return hidePopover() }
         guard let model, let rail = window, index < model.vendorUsages.count
@@ -421,6 +431,7 @@ final class EdgePanelController {
         view.onExit = { [weak self] in self?.railExited() }
         view.onHover = { [weak self] index in self?.hover(index) }
         view.onClick = { [weak self] index in self?.click(index) }
+        view.onDoubleClick = { [weak self] in self?.openWindowFromRail() }
         view.onDrag = { [weak self] _ in self?.hidePopover() }
         view.onDrop = { [weak self] in self?.rememberPosition() }
         view.frame = window.contentView?.bounds ?? .zero
@@ -590,6 +601,8 @@ private final class RailInterceptor: NSView {
     var onHover: (Int?) -> Void = { _ in }
     /// A click on a ring, which pins its popover open.
     var onClick: (Int?) -> Void = { _ in }
+    /// Two clicks, anywhere on the rail: open the window.
+    var onDoubleClick: () -> Void = {}
     var onDrag: (CGFloat) -> Void = { _ in }
     var onDrop: () -> Void = {}
 
@@ -686,6 +699,8 @@ private final class RailInterceptor: NSView {
         MainActor.assumeIsolated {
             if moved {
                 onDrop()
+            } else if event.clickCount == 2 {
+                onDoubleClick()
             } else {
                 onClick(RailLayout.index(
                     atDepth: convert(event.locationInWindow, from: nil).y, count: count
@@ -696,6 +711,12 @@ private final class RailInterceptor: NSView {
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    /// The line cannot explain itself, and neither can a ring.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        toolTip = "Corral usage — click a ring to keep its details, double-click to open Corral, drag to move"
     }
 }
 

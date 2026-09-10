@@ -315,20 +315,7 @@ final class StatusItemController {
     // ─ Actions ──────────────────────────────────────────────────────────────
 
     func open(selecting pid: pid_t?) {
-        if let pid { model.selection = pid }
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-
-        // Reopening is what brings the SwiftUI WindowGroup's window back after
-        // it has been closed; ordering an existing window front handles the
-        // case where it is merely hidden.
-        if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            NSApp.sendAction(
-                #selector(NSApplication.newWindowForTab(_:)), to: nil, from: nil
-            )
-        }
+        AppState.shared.openWindow(selecting: pid)
     }
 }
 
