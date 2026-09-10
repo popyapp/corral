@@ -27,6 +27,10 @@ struct RailView: View {
     /// looked at.
     var expanded: Bool
 
+    /// Which side edge the rail is on. Decides which way the rings are
+    /// uncovered as the window grows; everything else is the same rail.
+    var anchor: HUDAnchor = .right
+
     /// One animation, not two.
     ///
     /// This view does not animate anything, and that is the point. The window
@@ -54,9 +58,9 @@ struct RailView: View {
         // not change the size of what it is over, so the shape keeps taking the
         // window's width and the rings hang off the side of it, aligned to the
         // edge the rail is attached to and cut off at the window's frame.
-        HUDShape(anchor: .right)
+        HUDShape(anchor: anchor)
             .fill(HUD.surface)
-            .overlay(alignment: .trailing) {
+            .overlay(alignment: anchor == .left ? .leading : .trailing) {
                 if expanded {
                     VStack(spacing: RailLayout.spacing) {
                         ForEach(Array(model.vendorUsages.enumerated()), id: \.element.id) {
@@ -65,8 +69,9 @@ struct RailView: View {
                         }
                     }
                     .padding(.vertical, RailLayout.margin)
-                    .padding(.leading, 12)
-                    .padding(.trailing, 8)
+                    // The wider gap goes on the free edge, where the flare is.
+                    .padding(.leading, anchor == .left ? 8 : 12)
+                    .padding(.trailing, anchor == .left ? 12 : 8)
                     // Its final width, whatever the window is doing right now.
                     // Laying the rings out inside something that is still
                     // growing would reflow them on every frame of the opening.
@@ -190,16 +195,25 @@ struct RingGauge: View {
 /// fragile in a way the user feels as the panel flickering.
 struct UsagePopoverView: View {
     let usage: VendorUsage
+    /// Which edge the rail is on, so the tail points at it.
+    var anchor: HUDAnchor = .right
     @EnvironmentObject var model: CorralViewModel
 
     var body: some View {
         HStack(spacing: 0) {
-            card
             // The tail, aimed at the ring this belongs to. Without it the card
             // is a second window that happened to appear nearby.
-            Pointer()
-                .fill(HUD.surface)
-                .frame(width: Self.pointerWidth, height: 18)
+            if anchor == .left {
+                Pointer(towards: .left)
+                    .fill(HUD.surface)
+                    .frame(width: Self.pointerWidth, height: 18)
+            }
+            card
+            if anchor != .left {
+                Pointer(towards: .right)
+                    .fill(HUD.surface)
+                    .frame(width: Self.pointerWidth, height: 18)
+            }
         }
     }
 
@@ -304,13 +318,18 @@ struct UsagePopoverView: View {
     }
 }
 
-/// The popover's tail, pointing right at the rail.
+/// The popover's tail, pointing at the rail.
 private struct Pointer: Shape {
+    enum Side { case left, right }
+    var towards: Side = .right
+
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        let base = towards == .right ? rect.minX : rect.maxX
+        let tip = towards == .right ? rect.maxX : rect.minX
+        path.move(to: CGPoint(x: base, y: rect.minY))
+        path.addLine(to: CGPoint(x: tip, y: rect.midY))
+        path.addLine(to: CGPoint(x: base, y: rect.maxY))
         path.closeSubpath()
         return path
     }

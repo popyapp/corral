@@ -42,11 +42,17 @@ struct HUDPanelView: View {
             return EdgeInsets(top: 4, leading: 22, bottom: 10, trailing: 22)
         case .right:
             return EdgeInsets(top: 22, leading: 10, bottom: 22, trailing: 6)
+        case .left:
+            return EdgeInsets(top: 22, leading: 6, bottom: 22, trailing: 10)
         }
     }
 
     private var gaugeAlignment: Alignment {
-        anchor == .top ? .bottom : .leading
+        switch anchor {
+        case .top: return .bottom
+        case .right: return .leading
+        case .left: return .trailing
+        }
     }
 
     @ViewBuilder
@@ -61,7 +67,7 @@ struct HUDPanelView: View {
             anchor == .top ? .horizontal : .vertical,
             HUD.shellRadius + 11
         )
-        .padding(anchor == .top ? .bottom : .leading, 3)
+        .padding(anchor == .top ? .bottom : (anchor == .left ? .trailing : .leading), 3)
     }
 }
 
@@ -88,7 +94,7 @@ private struct CollapsedLine: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-            case .right:
+            case .right, .left:
                 VStack(spacing: 5) {
                     ToolGlyph(tool: fullest.tool, size: 16)
                     Text(percent(fullest.fraction))
@@ -140,7 +146,8 @@ private struct UsageDetail: View {
             Button {
                 EdgePanelController.shared.collapse()
             } label: {
-                Image(systemName: anchor == .top ? "chevron.up" : "chevron.right")
+                Image(systemName: anchor == .top ? "chevron.up"
+                      : (anchor == .left ? "chevron.left" : "chevron.right"))
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(HUD.faint)
             }

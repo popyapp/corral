@@ -58,10 +58,12 @@ idle, what it spawned, and what it is costing you.
 - **What is safe to reclaim.** Agents idle for over an hour, totalled, behind one
   button. Anything still working — including an agent waiting on a build it
   started — is never in that total.
-- **A menu bar item.** Corral keeps running with its window closed, and the top
-  right shows the busiest agent's CPU — or just how many are running when
-  nothing is working hard. Hover for the summary, click for the list, click a
-  row to open the window on that agent.
+- **A menu bar item.** Corral keeps running with its window closed — and
+  leaves the Dock while it does, so a monitor in the background is not a tile
+  you have to look at. The top right shows the busiest agent's CPU — or just
+  how many are running when nothing is working hard. Hover for the summary,
+  click for the list, click a row to open the window on that agent, and Quit
+  is on the same menu when you want it gone for real.
 - **The tool's own icon.** Taken from the copy of Claude, Cursor or ChatGPT
   already installed on your Mac, the same way Finder draws it. Corral ships no
   brand artwork; a tool you do not have installed falls back to a symbol.
@@ -137,8 +139,9 @@ questions: an allowance belongs to the account and refills on a clock, a context
 window belongs to one conversation and is the only one of the two you can do
 something about right now.
 
-They show in three places — a line on the right edge of the screen that opens
-into a ring per vendor when you go near it, a **Usage** tab in the window, and
+They show in three places — a line on the right or left edge of the screen (or a
+strip at the top) that opens into a ring per vendor when you go near it, a
+**Usage** tab in the window, and
 the fullness of each conversation in its own row of the agent list.
 
 Where the figures come from differs by tool, and Corral says so rather than

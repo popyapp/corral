@@ -167,21 +167,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             EdgePanelController.shared.apply(model: AppState.shared.agents)
         }
+
+        // Closing the last window is when Corral leaves the Dock. See
+        // `applicationShouldTerminateAfterLastWindowClosed`.
+        NotificationCenter.default
+            .publisher(for: NSWindow.willCloseNotification)
+            .sink { [weak self] notification in
+                guard let window = notification.object as? NSWindow, window.canBecomeMain
+                else { return }
+                MainActor.assumeIsolated { self?.leaveTheDockIfNothingIsOpen(closing: window) }
+            }
+            .store(in: &cancellables)
     }
 
     /// Closing the window puts Corral in the background rather than quitting.
     /// A monitor you have to keep a window open for is not a monitor; the menu
     /// bar item stays, and Quit is on its menu.
+    ///
+    /// Background means background: the Dock icon goes too. An app that keeps
+    /// a Dock tile with no window behind it is the thing people force-quit to
+    /// tidy up, and the usage panel on the screen edge and the menu bar item
+    /// are the two ways back in. Opening the window from either brings the
+    /// tile back for as long as the window is open, so ⌘-Tab works while
+    /// there is something to switch to.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
 
-    /// Clicking the dock icon with no window open brings one back.
+    @MainActor
+    private func leaveTheDockIfNothingIsOpen(closing window: NSWindow) {
+        // Asked after the close has happened: the notification arrives before
+        // the window is gone, so it would still count itself.
+        DispatchQueue.main.async {
+            let stillOpen = NSApp.windows.contains {
+                $0 !== window && $0.canBecomeMain && $0.isVisible
+            }
+            guard !stillOpen else { return }
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// Reopening — from the Dock while it is there, or from `open -a Corral`
+    /// once it is not — brings a window back, and the Dock tile with it.
     func applicationShouldHandleReopen(
         _ sender: NSApplication,
         hasVisibleWindows: Bool
     ) -> Bool {
         if !hasVisibleWindows {
+            NSApp.setActivationPolicy(.regular)
             MainActor.assumeIsolated { AppState.shared.agents.selection = nil }
         }
         return true

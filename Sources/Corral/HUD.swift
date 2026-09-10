@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Which screen edge the panel is attached to.
 enum HUDAnchor: String, CaseIterable, Identifiable {
-    case top, right
+    case top, right, left
 
     var id: String { rawValue }
 
@@ -10,8 +10,14 @@ enum HUDAnchor: String, CaseIterable, Identifiable {
         switch self {
         case .top: return "Top"
         case .right: return "Right Edge"
+        case .left: return "Left Edge"
         }
     }
+
+    /// The two side edges share one behaviour — a line that opens into a rail
+    /// of rings when the pointer arrives — and differ only in which way the
+    /// rail is uncovered and which side the popover sits on.
+    var isRail: Bool { self != .top }
 }
 
 /// The outline of a panel that grows out of the edge of the screen.
@@ -39,12 +45,19 @@ struct HUDShape: Shape {
                                        flare: flare, radius: radius)
         case .right:
             // The same outline, turned a quarter turn. Building it once and
-            // rotating keeps the two anchors from drifting apart the first time
+            // rotating keeps the anchors from drifting apart the first time
             // one of the radii is tuned.
             let turned = Self.hangingFromTop(width: rect.height, height: rect.width,
                                              flare: flare, radius: radius)
             return turned.applying(
                 CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: rect.width, ty: 0)
+            )
+        case .left:
+            // The other quarter turn: the attached edge lands on x == 0.
+            let turned = Self.hangingFromTop(width: rect.height, height: rect.width,
+                                             flare: flare, radius: radius)
+            return turned.applying(
+                CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: rect.height)
             )
         }
     }

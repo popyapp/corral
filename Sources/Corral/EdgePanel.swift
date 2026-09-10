@@ -138,7 +138,7 @@ final class EdgePanelController {
         layout(animated: false)
         switch anchor {
         case .top: attachInterceptor()
-        case .right: attachRailTracker(model: model)
+        case .right, .left: attachRailTracker(model: model)
         }
         window?.orderFront(nil)
     }
@@ -165,9 +165,9 @@ final class EdgePanelController {
             hosting.rootView = AnyView(
                 HUDPanelView(anchor: .top, expanded: expanded).environmentObject(model)
             )
-        case .right:
+        case .right, .left:
             hosting.rootView = AnyView(
-                RailView(hovering: hoveredIndex, expanded: expanded)
+                RailView(hovering: hoveredIndex, expanded: expanded, anchor: anchor)
                     .environmentObject(model)
             )
             railTracker?.count = model.vendorUsages.count
@@ -192,7 +192,7 @@ final class EdgePanelController {
     /// The pointer arrived. Open.
     private func railEntered() {
         collapseWork?.cancel()
-        guard anchor == .right, !expanded else { return }
+        guard anchor.isRail, !expanded else { return }
         expanded = true
         hoveredIndex = nil
         hidePopover()
@@ -237,7 +237,7 @@ final class EdgePanelController {
     }
 
     private func collapseRail() {
-        guard anchor == .right, expanded else { return }
+        guard anchor.isRail, expanded else { return }
         settleWork?.cancel()
         settling = false
         expanded = false
@@ -276,7 +276,7 @@ final class EdgePanelController {
     }
 
     private func show(ring index: Int?) {
-        guard anchor == .right, let index else { return hidePopover() }
+        guard anchor.isRail, let index else { return hidePopover() }
         guard let model, let rail = window, index < model.vendorUsages.count
         else { return hidePopover() }
         let usage = model.vendorUsages[index]
@@ -308,7 +308,7 @@ final class EdgePanelController {
         }
 
         popoverHost?.rootView = AnyView(
-            UsagePopoverView(usage: usage).environmentObject(model)
+            UsagePopoverView(usage: usage, anchor: anchor).environmentObject(model)
         )
         guard let popover, let host = popoverHost else { return }
 
@@ -319,13 +319,12 @@ final class EdgePanelController {
         let screen = (rail.screen ?? NSScreen.main)?.visibleFrame ?? .zero
         let top = min(max(centre - height / 2, screen.minY + 8), screen.maxY - height - 8)
 
+        // Beside the rail, on the side the screen is.
+        let x = anchor == .left
+            ? rail.frame.maxX + 2
+            : rail.frame.minX - UsagePopoverView.totalWidth - 2
         popover.setFrame(
-            NSRect(
-                x: rail.frame.minX - UsagePopoverView.totalWidth - 2,
-                y: top,
-                width: UsagePopoverView.totalWidth,
-                height: height
-            ),
+            NSRect(x: x, y: top, width: UsagePopoverView.totalWidth, height: height),
             display: true
         )
         popover.orderFront(nil)
@@ -380,7 +379,7 @@ final class EdgePanelController {
         if PanelSettings.shared.placement == .off {
             PanelSettings.shared.placement = .top
         }
-        anchor == .right ? railEntered() : expand()
+        anchor.isRail ? railEntered() : expand()
     }
 
     // ─ Mouse handling ───────────────────────────────────────────────────────
@@ -480,9 +479,7 @@ final class EdgePanelController {
                 height: size.height
             )
 
-        case .right:
-            // The glass edge too, unless something is parked on it.
-            let edge = usable.maxX < glass.maxX ? usable.maxX : glass.maxX
+        case .right, .left:
             // Anchored by its middle, not its top: the line and the open rail
             // are different heights, and growing downward from a fixed top
             // would read as the panel sliding rather than opening.
@@ -492,6 +489,13 @@ final class EdgePanelController {
                 max(centre - size.height / 2, usable.minY),
                 usable.maxY - size.height
             )
+            // The glass edge, unless something is parked on it — a Dock on
+            // that side pushes the rail in past it.
+            if anchor == .left {
+                let edge = usable.minX > glass.minX ? usable.minX : glass.minX
+                return NSRect(x: edge, y: y, width: size.width, height: size.height)
+            }
+            let edge = usable.maxX < glass.maxX ? usable.maxX : glass.maxX
             return NSRect(x: edge - size.width, y: y, width: size.width, height: size.height)
         }
     }
@@ -508,7 +512,7 @@ final class EdgePanelController {
             let travel = usable.width - frame.width
             guard travel > 0 else { return }
             fraction = (frame.minX - usable.minX) / travel
-        case .right:
+        case .right, .left:
             let travel = usable.height - RailLayout.railMargin * 2
             guard travel > 0 else { return }
             fraction = (usable.maxY - RailLayout.railMargin - frame.midY) / travel
@@ -530,7 +534,7 @@ enum HUDMetrics {
                 ? CGSize(width: 420, height: min(430, usable.height - 60))
                 : CGSize(width: 268, height: 40)
 
-        case .right:
+        case .right, .left:
             // Closed, it is a line on the edge of the screen. That is how it
             // sits for nearly all of its life, and the width it grows *from* is
             // what makes opening read as coming out of the side rather than
@@ -740,7 +744,7 @@ private final class ClickInterceptor: NSView {
                 max(originAtGrab.x + delta.x, usable.minX),
                 usable.maxX - frame.width
             )
-        case .right:
+        case .right, .left:
             frame.origin.y = min(
                 max(originAtGrab.y + delta.y, usable.minY),
                 usable.maxY - frame.height
