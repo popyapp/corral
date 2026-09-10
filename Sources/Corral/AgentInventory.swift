@@ -143,11 +143,27 @@ final class AgentInventory {
             match.role == .agent ? pid : nil
         }
         // Electron helpers are matched directly but belong under their app.
+        //
+        // Most are its children and are picked up below. Two are not: the
+        // crash handler and the updater both reparent to launchd the moment
+        // they start, so by ancestry they belong to nobody. They still belong
+        // to the app, and a second row named after it — "Antigravity · pid
+        // 76300", holding eight megabytes and no project — read as a second
+        // copy of the app to anyone looking. So an orphaned helper of a
+        // desktop app is filed under that app's main process when one is
+        // running. Only desktop apps: a CLI's helper with no parent has no
+        // single home to be sent to.
+        var adoptedBy: [pid_t: [pid_t]] = [:]
         for (pid, match) in matches where match.role != .agent {
             let hasRecognisedAncestor = ancestors(of: pid, in: byPid)
                 .contains { matches[$0]?.role == .agent }
-            if !hasRecognisedAncestor { roots.append(pid) }
-            _ = match
+            guard !hasRecognisedAncestor else { continue }
+            if !match.tool.isProjectScoped,
+               let home = roots.filter({ matches[$0]?.tool == match.tool }).min() {
+                adoptedBy[home, default: []].append(pid)
+            } else {
+                roots.append(pid)
+            }
         }
 
         var built: [AgentGroup] = []
@@ -162,7 +178,8 @@ final class AgentInventory {
             let root = makeProcess(raw, tool: match.tool, role: match.role, version: match.version)
 
             var children: [AgentProcess] = []
-            for descendant in descendants(of: pid, in: childrenOf) where !claimed.contains(descendant) {
+            let household = descendants(of: pid, in: childrenOf) + (adoptedBy[pid] ?? [])
+            for descendant in household where !claimed.contains(descendant) {
                 guard !selfLineage.contains(descendant) else { continue }
                 guard let childRaw = byPid[descendant] else { continue }
                 claimed.insert(descendant)

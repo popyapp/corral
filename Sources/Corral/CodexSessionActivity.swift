@@ -16,8 +16,9 @@ struct CodexSessionActivityReader: SessionActivityReader {
     }
 
     func reading(_ lookup: SessionLookup) -> SessionActivityReading? {
+        guard let project = lookup.project else { return nil }
         for file in CodexRollouts.newest(under: root)
-        where !lookup.claimed.contains(file.path) && Self.projectPath(of: file) == lookup.project {
+        where !lookup.claimed.contains(file.path) && Self.projectPath(of: file) == project {
             if let hit = scan(file), hit.activity.at >= lookup.startedAt {
                 return SessionActivityReading(
                     activity: hit.activity, source: file.path, context: hit.context

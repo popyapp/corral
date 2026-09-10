@@ -14,6 +14,16 @@ enum Tool: String, CaseIterable, Identifiable, Codable {
     case cursorAgent
     case copilot
     case windsurf
+    /// Kiro's terminal agent — `kiro-cli chat` in a project, or `kiro-cli acp`
+    /// driven by another program.
+    case kiroCLI
+    /// Kiro Crew, the desktop app that runs a fleet of Kiro CLI agents.
+    case kiroCrew
+    /// The Kiro IDE.
+    case kiro
+    /// Google's Antigravity IDE. Its agents run inside the app rather than as
+    /// processes of their own.
+    case antigravity
 
     var id: String { rawValue }
 
@@ -26,6 +36,10 @@ enum Tool: String, CaseIterable, Identifiable, Codable {
         case .cursorAgent: return "Cursor Agent"
         case .copilot: return "Copilot"
         case .windsurf: return "Windsurf"
+        case .kiroCLI: return "Kiro CLI"
+        case .kiroCrew: return "Kiro Crew"
+        case .kiro: return "Kiro"
+        case .antigravity: return "Antigravity"
         }
     }
 
@@ -37,6 +51,9 @@ enum Tool: String, CaseIterable, Identifiable, Codable {
         case .cursor, .cursorAgent: return "Cursor"
         case .copilot: return "Copilot"
         case .windsurf: return "Windsurf"
+        // One account, one pool of credits, whichever of the three spends it.
+        case .kiroCLI, .kiroCrew, .kiro: return "Kiro"
+        case .antigravity: return "Antigravity"
         }
     }
 
@@ -49,6 +66,10 @@ enum Tool: String, CaseIterable, Identifiable, Codable {
         case .cursor, .cursorAgent: return "cursorarrow.rays"
         case .copilot: return "airplane"
         case .windsurf: return "wind"
+        case .kiroCLI: return "terminal"
+        case .kiroCrew: return "person.3"
+        case .kiro: return "hammer"
+        case .antigravity: return "sparkles"
         }
     }
 
@@ -56,8 +77,9 @@ enum Tool: String, CaseIterable, Identifiable, Codable {
     /// working directory is the thing that identifies the instance.
     var isProjectScoped: Bool {
         switch self {
-        case .claudeCode, .codex, .cursorAgent: return true
-        case .claudeDesktop, .cursor, .copilot, .windsurf: return false
+        case .claudeCode, .codex, .cursorAgent, .kiroCLI: return true
+        case .claudeDesktop, .cursor, .copilot, .windsurf, .kiroCrew, .kiro, .antigravity:
+            return false
         }
     }
 }

@@ -277,6 +277,13 @@ struct UsagePopoverView: View {
         case .cursorAgent, .cursor:
             return "Cursor does not publish what your account has left, here or "
                 + "anywhere else on this Mac."
+        case .kiroCLI, .kiroCrew, .kiro:
+            return "Kiro keeps the balance on its servers. Corral can ask for it — "
+                + "turn on \u{201C}\(KiroAccountSetup.title)\u{201D} in the menu. What each "
+                + "turn cost is below."
+        case .antigravity:
+            return "Antigravity keeps its rate limits on Google's servers and its "
+                + "conversations encrypted, so there is no figure to show."
         default:
             return "\(usage.name) does not record its limits on this Mac."
         }
@@ -340,6 +347,11 @@ private struct LimitBlock: View {
     }
 
     private var remaining: String {
+        if let quantity = limit.quantity {
+            return quantity.remaining <= 0
+                ? "none left · waiting for the reset"
+                : quantity.remainingText
+        }
         let left = (1 - limit.usedFraction) * 100
         // Past the limit there is nothing left, and saying "-3% left" would be
         // arithmetic rather than an answer.
@@ -354,7 +366,7 @@ private struct LimitBlock: View {
         switch limit.label {
         case "5-hour": return "Current session"
         case "7-day": return "All models"
-        default: return limit.label
+        default: return limit.label.prefix(1).uppercased() + limit.label.dropFirst()
         }
     }
 
@@ -423,7 +435,9 @@ private struct ModelBlock: View {
                         .foregroundStyle(HUD.primary)
                         .frame(width: 34, alignment: .trailing)
                 }
-                .help(breakdown.isSplit
+                .help(breakdown.isCredits
+                      ? "\(use.model): \(use.creditsSummary) credits"
+                      : breakdown.isSplit
                       ? "\(use.model): \(use.outputSummary) out, \(use.inputSummary) in"
                       : "\(use.model): \(ModelUse.compact(use.totalTokens)) tokens")
             }

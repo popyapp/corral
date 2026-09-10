@@ -47,6 +47,12 @@ enum BuildInfo {
     /// The rest of the apps this one belongs to.
     static var homeURL: URL { URL(string: "https://popy.app")! }
 
+    /// Where to say something is wrong. Issues rather than a mailbox: the
+    /// answer is public, and the next person with the same problem finds it.
+    static var supportURL: URL {
+        URL(string: "https://github.com/\(repository)/issues")!
+    }
+
     /// The exact commit this was built from, when there is one to point at.
     static var commitURL: URL? {
         guard !isDirty else { return nil }

@@ -356,6 +356,278 @@ enum DiskCatalog {
             detail: "Parsed sources and indexes the editor rebuilds on demand.",
             safety: .safe
         ),
+
+        // ─ Kiro CLI ─────────────────────────────────────────────────────────
+        .init(
+            tool: .kiroCLI,
+            relativePath: ".kiro/sessions/cli",
+            title: "Conversation history",
+            detail: "Every Kiro CLI session, Kiro Crew's included. Removing this means --resume has nothing to resume.",
+            safety: .userData
+        ),
+
+        // ─ Kiro Crew ────────────────────────────────────────────────────────
+        .init(
+            tool: .kiroCrew,
+            relativePath: ".kiro/crew/models",
+            title: "Embedding model",
+            detail: "The local model Kiro Crew's memory embeds with. Fetched again the next time memory needs it.",
+            safety: .redownload
+        ),
+        .init(
+            tool: .kiroCrew,
+            relativePath: ".kiro/crew/cache",
+            title: "Cache",
+            detail: "Compiled Python, crash dumps and scratch space the gateway rebuilds.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiroCrew,
+            relativePath: ".kiro/crew/logs",
+            title: "Gateway logs",
+            detail: "Diagnostic logs from the background gateway.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiroCrew,
+            relativePath: "Library/Logs/Kiro Crew",
+            title: "Logs",
+            detail: "Diagnostic logs.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiroCrew,
+            relativePath: "Library/Application Support/kirocrew-desktop/Cache",
+            title: "Network cache",
+            detail: "Electron's HTTP cache.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiroCrew,
+            relativePath: "Library/Application Support/kirocrew-desktop/Code Cache",
+            title: "Compiled script cache",
+            detail: "Chromium's compiled JavaScript cache.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiroCrew,
+            relativePath: "Library/Application Support/kirocrew-desktop/GPUCache",
+            title: "GPU cache",
+            detail: "Compiled shaders.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiroCrew,
+            relativePath: "Library/Application Support/kirocrew-desktop/DawnWebGPUCache",
+            title: "WebGPU cache",
+            detail: "Compiled WebGPU shaders.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiroCrew,
+            relativePath: "Library/Application Support/kirocrew-desktop/DawnGraphiteCache",
+            title: "Graphite cache",
+            detail: "Compiled graphics pipelines.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiroCrew,
+            relativePath: ".kiro/crew/sessions",
+            title: "Session workspaces",
+            detail: "Per-session history, sub-agent results and artifacts.",
+            safety: .userData
+        ),
+        .init(
+            tool: .kiroCrew,
+            relativePath: ".kiro/crew/workspace",
+            title: "Agent workspace",
+            detail: "Files the agents made for themselves — notes, tasks, configs.",
+            safety: .userData
+        ),
+
+        // ─ Kiro IDE ─────────────────────────────────────────────────────────
+        // A VS Code fork, so it inherits Code's storage layout.
+        .init(
+            tool: .kiro,
+            relativePath: "Library/Application Support/Kiro/Cache",
+            title: "Network cache",
+            detail: "Electron's HTTP cache.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiro,
+            relativePath: "Library/Application Support/Kiro/Code Cache",
+            title: "Compiled script cache",
+            detail: "Chromium's compiled JavaScript cache.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiro,
+            relativePath: "Library/Application Support/Kiro/CachedData",
+            title: "Cached data",
+            detail: "Parsed sources and indexes the editor rebuilds on demand.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiro,
+            relativePath: "Library/Application Support/Kiro/GPUCache",
+            title: "GPU cache",
+            detail: "Compiled shaders.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiro,
+            relativePath: "Library/Application Support/Kiro/logs",
+            title: "Logs",
+            detail: "Per-window and extension host logs.",
+            safety: .safe
+        ),
+        .init(
+            tool: .kiro,
+            relativePath: "Library/Application Support/Kiro/User/workspaceStorage",
+            title: "Workspace storage",
+            detail: "Per-project editor state: open tabs, undo, view layout.",
+            safety: .userData
+        ),
+        .init(
+            tool: .kiro,
+            relativePath: "Library/Application Support/Kiro/User/History",
+            title: "Local file history",
+            detail: "The editor's own undo history for edited files.",
+            safety: .userData
+        ),
+
+        // ─ Antigravity ──────────────────────────────────────────────────────
+        // Also a VS Code fork. Its agent data lives under ~/.gemini, in two
+        // copies once the updater has installed the renamed app: the second
+        // is what `Antigravity IDE.app` reads, and the first is what it was
+        // copied from.
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Application Support/Antigravity/Cache",
+            title: "Network cache",
+            detail: "Electron's HTTP cache.",
+            safety: .safe
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Application Support/Antigravity/Code Cache",
+            title: "Compiled script cache",
+            detail: "Chromium's compiled JavaScript cache.",
+            safety: .safe
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Application Support/Antigravity/CachedData",
+            title: "Cached data",
+            detail: "Parsed sources and indexes the editor rebuilds on demand.",
+            safety: .safe
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Application Support/Antigravity/CachedExtensionVSIXs",
+            title: "Extension downloads",
+            detail: "Downloaded extension packages, kept after install.",
+            safety: .safe
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Application Support/Antigravity/GPUCache",
+            title: "GPU cache",
+            detail: "Compiled shaders.",
+            safety: .safe
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Application Support/Antigravity/logs",
+            title: "Logs",
+            detail: "Per-window and extension host logs.",
+            safety: .safe
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Logs/Antigravity",
+            title: "Agent logs",
+            detail: "The language server's and updater's logs.",
+            safety: .safe
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Caches/com.google.antigravity.ShipIt",
+            title: "Staged update",
+            detail: "An update the app unpacked to install. Fetched again if it is still needed.",
+            safety: .safe
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Caches/antigravity-updater",
+            title: "Downloaded updates",
+            detail: "Update archives the app has already downloaded.",
+            safety: .redownload
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Application Support/Antigravity/User/workspaceStorage",
+            title: "Workspace storage",
+            detail: "Per-project editor state: open tabs, undo, view layout.",
+            safety: .userData
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: "Library/Application Support/Antigravity/User/History",
+            title: "Local file history",
+            detail: "The editor's own undo history for edited files.",
+            safety: .userData
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: ".antigravity/extensions",
+            title: "Extensions",
+            detail: "Installed extensions.",
+            safety: .userData
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: ".gemini/antigravity/browser_recordings",
+            title: "Browser recordings",
+            detail: "Recordings of the agent's browser sessions. Easily the largest thing it keeps.",
+            safety: .userData
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: ".gemini/antigravity/conversations",
+            title: "Conversation history",
+            detail: "Every agent conversation, encrypted. Removing this loses them.",
+            safety: .userData
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: ".gemini/antigravity/brain",
+            title: "Agent artifacts",
+            detail: "Task plans, walkthroughs and screenshots the agent produced per conversation.",
+            safety: .userData
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: ".gemini/antigravity-ide/browser_recordings",
+            title: "Browser recordings (Antigravity IDE)",
+            detail: "The renamed app's copy of the agent's browser recordings.",
+            safety: .userData
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: ".gemini/antigravity-ide/conversations",
+            title: "Conversation history (Antigravity IDE)",
+            detail: "The renamed app's copy of every agent conversation, encrypted.",
+            safety: .userData
+        ),
+        .init(
+            tool: .antigravity,
+            relativePath: ".gemini/antigravity-ide/brain",
+            title: "Agent artifacts (Antigravity IDE)",
+            detail: "The renamed app's copy of the agent's task plans and screenshots.",
+            safety: .userData
+        ),
     ]
 
     /// Roots outside which the remover refuses to act, whatever a catalog entry
@@ -373,6 +645,13 @@ enum DiskCatalog {
             home + "/Library/Application Support/Claude",
             home + "/Library/Application Support/Cursor",
             home + "/Library/Application Support/Windsurf",
+            home + "/.kiro",
+            home + "/Library/Application Support/kirocrew-desktop",
+            home + "/Library/Application Support/Kiro",
+            home + "/.antigravity",
+            home + "/.gemini/antigravity",
+            home + "/.gemini/antigravity-ide",
+            home + "/Library/Application Support/Antigravity",
             home + "/Library/Caches",
             home + "/Library/Logs",
         ]

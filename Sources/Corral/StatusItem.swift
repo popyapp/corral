@@ -201,6 +201,16 @@ final class StatusItemController {
             if case .installed = StatusLineSetup.state(of: agent) { entry.state = .on }
             reportingMenu.addItem(entry)
         }
+        reportingMenu.addItem(.separator())
+        let kiro = NSMenuItem(
+            title: KiroAccountSetup.title,
+            action: #selector(MenuBuilder.toggleKiroAccount),
+            keyEquivalent: ""
+        )
+        kiro.target = MenuBuilder.shared
+        kiro.state = KiroAccount.isEnabled ? .on : .off
+        kiro.toolTip = "The only thing in Corral that uses the network. Asks first."
+        reportingMenu.addItem(kiro)
         reporting.submenu = reportingMenu
         menu.addItem(reporting)
 
@@ -262,6 +272,15 @@ final class StatusItemController {
         )
         about.target = MenuBuilder.shared
         menu.addItem(about)
+
+        let support = NSMenuItem(
+            title: "Report a Problem…",
+            action: #selector(MenuBuilder.reportProblem),
+            keyEquivalent: ""
+        )
+        support.target = MenuBuilder.shared
+        support.toolTip = BuildInfo.supportURL.absoluteString
+        menu.addItem(support)
 
         let quit = NSMenuItem(
             title: "Quit Corral",
@@ -344,6 +363,14 @@ final class MenuBuilder: NSObject, NSMenuDelegate {
 
     @objc func showUsage() {
         MainActor.assumeIsolated { EdgePanelController.shared.reveal() }
+    }
+
+    @objc func reportProblem() {
+        NSWorkspace.shared.open(BuildInfo.supportURL)
+    }
+
+    @objc func toggleKiroAccount() {
+        MainActor.assumeIsolated { KiroAccountSetup.toggle() }
     }
 
     @objc func setUpUsage(_ sender: NSMenuItem) {

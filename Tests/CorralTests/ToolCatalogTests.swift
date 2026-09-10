@@ -217,6 +217,152 @@ final class ToolCatalogTests: XCTestCase {
         XCTAssertEqual(match.tool, .codex)
     }
 
+    // ─ Kiro ─────────────────────────────────────────────────────────────────
+
+    /// The chain a real `kiro-cli` produces, read off a live process table:
+    /// `kiro-cli` → `kiro-cli-chat chat` → a bundled `bun` running `tui.js`
+    /// → `kiro-cli-chat acp`. One agent, three helpers.
+    func testKiroCLIIsTheAgentAndItsChainAreHelpers() throws {
+        let front = try XCTUnwrap(
+            ToolCatalog.identify(raw("/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli", args: ["kiro-cli"]))
+        )
+        XCTAssertEqual(front.tool, .kiroCLI)
+        XCTAssertEqual(front.role, .agent)
+
+        let chat = try XCTUnwrap(
+            ToolCatalog.identify(
+                raw("/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat",
+                    args: ["/Users/someone/.local/bin/kiro-cli-chat", "chat"])
+            )
+        )
+        XCTAssertEqual(chat.tool, .kiroCLI)
+        XCTAssertEqual(chat.role, .helper)
+
+        let tui = try XCTUnwrap(
+            ToolCatalog.identify(
+                raw("/Users/someone/Library/Application Support/kiro-cli/bun",
+                    args: ["/Users/someone/Library/Application Support/kiro-cli/bun",
+                           "/Users/someone/Library/Application Support/kiro-cli/tui.js", "chat"],
+                    comm: "bun")
+            )
+        )
+        XCTAssertEqual(tui.tool, .kiroCLI)
+        XCTAssertEqual(tui.role, .helper)
+
+        let engine = try XCTUnwrap(
+            ToolCatalog.identify(
+                raw("/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat",
+                    args: ["/Users/someone/.local/bin/kiro-cli-chat", "acp"])
+            )
+        )
+        XCTAssertEqual(engine.role, .helper)
+    }
+
+    /// A symlinked or copied binary, outside the bundle.
+    func testKiroCLIByNameAlone() throws {
+        let match = try XCTUnwrap(ToolCatalog.identify(raw("/Users/someone/.local/bin/kiro-cli")))
+        XCTAssertEqual(match.tool, .kiroCLI)
+        XCTAssertEqual(match.role, .agent)
+        XCTAssertNil(match.version, "no bundle, no version")
+    }
+
+    /// The background service the installer registers with launchd: Kiro,
+    /// but not an agent.
+    func testKiroCLIDesktopServiceIsAHelper() throws {
+        let match = try XCTUnwrap(
+            ToolCatalog.identify(
+                raw("/Applications/Kiro CLI.app/Contents/MacOS/kiro_cli_desktop",
+                    args: ["kiro_cli_desktop", "--no-dashboard"], cwd: "/")
+            )
+        )
+        XCTAssertEqual(match.tool, .kiroCLI)
+        XCTAssertEqual(match.role, .helper)
+    }
+
+    func testKiroCLIPassesThePreFilter() {
+        XCTAssertTrue(ToolCatalog.pathLooksLikeATool("/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli"))
+        XCTAssertTrue(ToolCatalog.pathLooksLikeATool("/Users/someone/Library/Application Support/kiro-cli/bun"))
+        XCTAssertTrue(ToolCatalog.pathLooksLikeATool("/Users/someone/.local/bin/kiro-cli"))
+        XCTAssertTrue(ToolCatalog.pathLooksLikeATool("/Applications/KiroCrew.app/Contents/MacOS/KiroCrew"))
+        XCTAssertTrue(ToolCatalog.pathLooksLikeATool("/Applications/Antigravity.app/Contents/MacOS/Antigravity"))
+    }
+
+    /// Kiro Crew is Electron with a Python gateway in its Resources. The
+    /// gateway is the app's machinery, not a second copy of the app — and the
+    /// `kiro-cli acp` it starts per session is a Kiro CLI agent in its own
+    /// right, which the inventory then files under the Crew group.
+    func testKiroCrewMainAndItsGateway() throws {
+        let main = try XCTUnwrap(
+            ToolCatalog.identify(raw("/Applications/KiroCrew.app/Contents/MacOS/KiroCrew", cwd: "/"))
+        )
+        XCTAssertEqual(main.tool, .kiroCrew)
+        XCTAssertEqual(main.role, .agent)
+
+        let gateway = try XCTUnwrap(
+            ToolCatalog.identify(
+                raw("/Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python3.12",
+                    args: ["python3.12", "-s", "-m", "kiro_crew", "gateway", "--no-open", "--port", "5476"],
+                    comm: "python3.12", cwd: "/")
+            )
+        )
+        XCTAssertEqual(gateway.tool, .kiroCrew)
+        XCTAssertEqual(gateway.role, .helper)
+
+        let renderer = try XCTUnwrap(
+            ToolCatalog.identify(
+                raw("/Applications/KiroCrew.app/Contents/Frameworks/KiroCrew Helper (Renderer).app/Contents/MacOS/KiroCrew Helper (Renderer)",
+                    args: ["KiroCrew Helper (Renderer)", "--type=renderer"], cwd: "/")
+            )
+        )
+        XCTAssertEqual(renderer.role, .renderer)
+
+        let agent = try XCTUnwrap(
+            ToolCatalog.identify(
+                raw("/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli",
+                    args: ["/Users/someone/.local/bin/kiro-cli", "acp", "--agent", "kirocrew-lite"])
+            )
+        )
+        XCTAssertEqual(agent.tool, .kiroCLI)
+        XCTAssertEqual(agent.role, .agent)
+    }
+
+    func testKiroIDE() throws {
+        let match = try XCTUnwrap(
+            ToolCatalog.identify(raw("/Applications/Kiro.app/Contents/MacOS/Kiro", cwd: "/"))
+        )
+        XCTAssertEqual(match.tool, .kiro)
+        XCTAssertEqual(match.role, .agent)
+    }
+
+    // ─ Antigravity ──────────────────────────────────────────────────────────
+
+    /// Two bundle names for one product, and a Go language server in the
+    /// bundle's Resources that is the app's, not an agent of its own.
+    func testAntigravityUnderBothOfItsNames() throws {
+        let original = try XCTUnwrap(
+            ToolCatalog.identify(raw("/Applications/Antigravity.app/Contents/MacOS/Antigravity", cwd: "/"))
+        )
+        XCTAssertEqual(original.tool, .antigravity)
+        XCTAssertEqual(original.role, .agent)
+
+        let renamed = try XCTUnwrap(
+            ToolCatalog.identify(raw("/Applications/Antigravity IDE.app/Contents/MacOS/Antigravity IDE", cwd: "/"))
+        )
+        XCTAssertEqual(renamed.tool, .antigravity)
+        XCTAssertEqual(renamed.role, .agent)
+
+        let server = try XCTUnwrap(
+            ToolCatalog.identify(
+                raw("/Applications/Antigravity.app/Contents/Resources/bin/language_server",
+                    args: ["language_server", "--standalone", "--override_ide_name", "antigravity",
+                           "--app_data_dir", "antigravity"],
+                    cwd: "/")
+            )
+        )
+        XCTAssertEqual(server.tool, .antigravity)
+        XCTAssertEqual(server.role, .helper)
+    }
+
     // ─ Rejections ───────────────────────────────────────────────────────────
 
     func testUnrelatedProcessesAreIgnored() {
@@ -227,6 +373,8 @@ final class ToolCatalogTests: XCTestCase {
             "/usr/libexec/secinitd",
             "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder",
             "/Applications/Docker.app/Contents/Resources/bin/docker",
+            // Kiro's name inside somebody else's path is not Kiro.
+            "/Users/someone/code/kiro-cli-notes/build",
         ] {
             XCTAssertNil(ToolCatalog.identify(raw(path)), "should not match: \(path)")
         }

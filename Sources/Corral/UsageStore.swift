@@ -29,10 +29,14 @@ final class UsageStore {
     /// left to no file on this machine and not to its status line either. Its
     /// context still shows per agent, which is a different question with a real
     /// local answer.
+    ///
+    /// Kiro is the one reader that asks a server, and only once told to; off,
+    /// it answers nothing and touches nothing. See `KiroAccount`.
     init(
         readers: [UsageReader] = [
             CodexUsageReader(),
             StatusSnapshotReader(tool: .claudeCode),
+            KiroAccountStore.shared,
         ],
         ttl: TimeInterval = 60
     ) {
@@ -96,7 +100,7 @@ final class ModelUsageStore {
     /// Named here so the panel can tell "nothing ran" apart from "Corral does
     /// not read this one" — two blanks that look identical and mean opposite
     /// things to anybody wondering why a row is empty.
-    static let counted: Set<Tool> = [.claudeCode, .codex]
+    static let counted: Set<Tool> = [.claudeCode, .codex, .kiroCLI]
 
     private let ttl: TimeInterval
     private let queue = DispatchQueue(label: "app.popy.corral.model-usage", qos: .utility)
@@ -104,6 +108,7 @@ final class ModelUsageStore {
 
     private let claude: ClaudeModelTally
     private let codex: CodexModelTally
+    private let kiro: KiroModelTally
 
     private var current: [Tool: [ModelBreakdown]] = [:]
     private var computedAt: Date = .distantPast
@@ -121,10 +126,12 @@ final class ModelUsageStore {
     init(
         claude: ClaudeModelTally = ClaudeModelTally(),
         codex: CodexModelTally = CodexModelTally(),
+        kiro: KiroModelTally = KiroModelTally(),
         ttl: TimeInterval = 90
     ) {
         self.claude = claude
         self.codex = codex
+        self.kiro = kiro
         self.ttl = ttl
     }
 
@@ -139,10 +146,14 @@ final class ModelUsageStore {
             let horizon = TimeInterval(Self.windows.max() ?? 10_080) * 60
             claude.refresh(now: now, horizon: horizon)
             codex.refresh(now: now, horizon: horizon)
+            kiro.refresh(now: now, horizon: horizon)
 
             var next: [Tool: [ModelBreakdown]] = [:]
             next[.claudeCode] = Self.breakdowns(of: claude.turns, now: now)
             next[.codex] = Self.breakdowns(of: codex.turns, now: now)
+            // Kiro Crew's sessions are Kiro CLI sessions, so one tally covers
+            // both and it is filed under the vendor's representative tool.
+            next[.kiroCLI] = Self.breakdowns(of: kiro.turns, now: now)
 
             lock.lock()
             current = next.filter { !$0.value.isEmpty }

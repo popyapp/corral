@@ -28,8 +28,10 @@ struct ClaudeSessionActivityReader: SessionActivityReader {
     }
 
     func reading(_ lookup: SessionLookup) -> SessionActivityReading? {
-        for file in transcripts(for: lookup) where !lookup.claimed.contains(file.path) {
-            if let hit = scan(file, expecting: lookup.project, startedAt: lookup.startedAt) {
+        guard let project = lookup.project else { return nil }
+        for file in transcripts(for: project, sessionId: lookup.sessionId)
+        where !lookup.claimed.contains(file.path) {
+            if let hit = scan(file, expecting: project, startedAt: lookup.startedAt) {
                 // A session that reported its own window beats one worked out
                 // from the transcript: it *states* the size instead of leaving
                 // it to be proved. The transcript stays as the fallback for
@@ -53,8 +55,8 @@ struct ClaudeSessionActivityReader: SessionActivityReader {
     /// another, and old ones are never cleaned up. Nothing in a transcript
     /// records a pid, so the file cannot be tied to the process directly; what
     /// rules the old ones out is time, in `scan`.
-    private func transcripts(for lookup: SessionLookup) -> [URL] {
-        let folder = root.appendingPathComponent(Self.directoryName(for: lookup.project))
+    private func transcripts(for project: String, sessionId: String?) -> [URL] {
+        let folder = root.appendingPathComponent(Self.directoryName(for: project))
         let contents = (try? FileManager.default.contentsOfDirectory(
             at: folder,
             includingPropertiesForKeys: [.contentModificationDateKey],
@@ -70,7 +72,7 @@ struct ClaudeSessionActivityReader: SessionActivityReader {
         // CLAUDE_CODE_SESSION_ID is the session the process was launched as,
         // and a session that has since been resumed or forked writes somewhere
         // else, so this is a promotion rather than a shortcut.
-        if let id = lookup.sessionId {
+        if let id = sessionId {
             let named = folder.appendingPathComponent("\(id).jsonl")
             if FileManager.default.fileExists(atPath: named.path) {
                 candidates.removeAll { $0.path == named.path }

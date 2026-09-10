@@ -57,6 +57,7 @@ struct CorralApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @ObservedObject private var appearance = AppearanceController.shared
     @ObservedObject private var panels = PanelSettings.shared
+    @ObservedObject private var kiroAccount = KiroAccountSettings.shared
 
     var body: some Scene {
         WindowGroup("Corral") {
@@ -79,6 +80,16 @@ struct CorralApp: App {
                     ForEach(StatusLineSetup.Target.all, id: \.tool) { agent in
                         Button(agent.name) { StatusLineSetup.offer(agent) }
                     }
+                    Divider()
+                    // The one network call in the app, behind a dialog that
+                    // says so. See `KiroAccount`.
+                    Toggle(
+                        KiroAccountSetup.title,
+                        isOn: Binding(
+                            get: { kiroAccount.isEnabled },
+                            set: { on in on ? KiroAccountSetup.offer() : KiroAccountSetup.turnOff() }
+                        )
+                    )
                 }
                 Picker("Usage Panel", selection: $panels.placement) {
                     ForEach(PanelPlacement.allCases) { option in
@@ -99,6 +110,12 @@ struct CorralApp: App {
                         Text(mode.label).tag(mode)
                     }
                 }
+            }
+            // The stock Help item searches a help book Corral does not have.
+            // What it has is an issue tracker, which is where help comes from.
+            CommandGroup(replacing: .help) {
+                Button("Report a Problem…") { NSWorkspace.shared.open(BuildInfo.supportURL) }
+                Button("Corral on GitHub") { NSWorkspace.shared.open(BuildInfo.repositoryURL) }
             }
         }
     }

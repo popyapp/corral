@@ -38,20 +38,38 @@ struct ModelUse: Equatable, Identifiable {
     /// travels with the number and the caption changes to match.
     let isSplit: Bool
 
-    init(model: String, inputTokens: Int, outputTokens: Int) {
+    /// What the work cost in the vendor's own unit, when that unit is not a
+    /// token. Kiro bills every turn in credits and writes the token fields as
+    /// zero, so for it this is the only figure there is; for everyone else it
+    /// is zero and never drawn.
+    let credits: Double
+
+    init(model: String, inputTokens: Int, outputTokens: Int, credits: Double = 0) {
         self.model = model
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.totalTokens = inputTokens + outputTokens
         self.isSplit = true
+        self.credits = credits
     }
 
-    init(model: String, totalTokens: Int) {
+    init(model: String, totalTokens: Int, credits: Double = 0) {
         self.model = model
         self.inputTokens = 0
         self.outputTokens = 0
         self.totalTokens = totalTokens
         self.isSplit = false
+        self.credits = credits
+    }
+
+    /// For a source that reports no tokens at all, only what it charged.
+    init(model: String, credits: Double) {
+        self.model = model
+        self.inputTokens = 0
+        self.outputTokens = 0
+        self.totalTokens = 0
+        self.isSplit = false
+        self.credits = credits
     }
 
     var id: String { model }
@@ -76,11 +94,24 @@ struct ModelUse: Equatable, Identifiable {
     var outputSummary: String { ModelUse.compact(outputTokens) }
     var inputSummary: String { ModelUse.compact(inputTokens) }
 
+    var creditsSummary: String { ModelUse.compact(credits: credits) }
+
     static func compact(_ value: Int) -> String {
         switch value {
         case 1_000_000...: return String(format: "%.1fM", Double(value) / 1_000_000)
         case 1_000...: return String(format: "%.0fk", Double(value) / 1_000)
         default: return "\(value)"
+        }
+    }
+
+    /// Credits are fractional — a short turn on the plan this was written
+    /// against cost 0.38 — so small figures keep two decimals and large ones
+    /// drop them, the way a price is read.
+    static func compact(credits value: Double) -> String {
+        switch value {
+        case 100...: return String(format: "%.0f", value)
+        case 10...: return String(format: "%.1f", value)
+        default: return String(format: "%.2f", value)
         }
     }
 }
@@ -98,25 +129,40 @@ struct ModelTurn: Equatable {
     let totalTokens: Int
     /// See `ModelUse.isSplit`.
     let isSplit: Bool
+    /// See `ModelUse.credits`.
+    let credits: Double
 
-    init(at: Date, model: String, inputTokens: Int, outputTokens: Int) {
+    init(at: Date, model: String, inputTokens: Int, outputTokens: Int, credits: Double = 0) {
         self.at = at
         self.model = model
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.totalTokens = inputTokens + outputTokens
         self.isSplit = true
+        self.credits = credits
     }
 
     /// For a source that reports one figure for a whole session rather than a
     /// split, and attributes it to the moment the session was last touched.
-    init(at: Date, model: String, totalTokens: Int) {
+    init(at: Date, model: String, totalTokens: Int, credits: Double = 0) {
         self.at = at
         self.model = model
         self.inputTokens = 0
         self.outputTokens = 0
         self.totalTokens = totalTokens
         self.isSplit = false
+        self.credits = credits
+    }
+
+    /// For a turn that was billed rather than counted.
+    init(at: Date, model: String, credits: Double) {
+        self.at = at
+        self.model = model
+        self.inputTokens = 0
+        self.outputTokens = 0
+        self.totalTokens = 0
+        self.isSplit = false
+        self.credits = credits
     }
 }
 
@@ -151,9 +197,18 @@ struct ModelBreakdown: Equatable {
     var totalOutput: Int { models.reduce(0) { $0 + $1.outputTokens } }
     var totalInput: Int { models.reduce(0) { $0 + $1.inputTokens } }
     var totalTokens: Int { models.reduce(0) { $0 + $1.totalTokens } }
+    var totalCredits: Double { models.reduce(0) { $0 + $1.credits } }
+
+    /// Whether this is a breakdown of what was charged rather than what was
+    /// counted. Kiro's turns carry credits and no tokens, and a vendor that
+    /// bills in a unit is best described in that unit.
+    var isCredits: Bool { totalCredits > 0 }
 
     /// The word for what the bars are shares of.
-    var basis: String { isSplit ? "output" : "tokens" }
+    var basis: String {
+        if isCredits { return "credits" }
+        return isSplit ? "output" : "tokens"
+    }
 
     /// A model's share of this window.
     ///
@@ -161,8 +216,12 @@ struct ModelBreakdown: Equatable {
     /// reads — on the machine this was written on, 621 million cached tokens
     /// against 2.7 million produced ones — and a bar drawn on the total would
     /// be a bar about caching. When there is no split to be had, the total is
-    /// the only honest denominator, and `basis` says so.
+    /// the only honest denominator, and `basis` says so. Credits, when that is
+    /// what the vendor wrote down, for the same reason.
     func share(_ use: ModelUse) -> Double {
+        if isCredits {
+            return totalCredits > 0 ? use.credits / totalCredits : 0
+        }
         let whole = isSplit ? totalOutput : totalTokens
         guard whole > 0 else { return 0 }
         return Double(isSplit ? use.outputTokens : use.totalTokens) / Double(whole)
@@ -187,27 +246,38 @@ enum ModelTally {
         var input: [String: Int] = [:]
         var output: [String: Int] = [:]
         var total: [String: Int] = [:]
+        var credits: [String: Double] = [:]
         var split = true
         for turn in turns where turn.at >= since {
             input[turn.model, default: 0] += turn.inputTokens
             output[turn.model, default: 0] += turn.outputTokens
             total[turn.model, default: 0] += turn.totalTokens
+            credits[turn.model, default: 0] += turn.credits
             if !turn.isSplit { split = false }
         }
-        let models = total.keys.map { model in
-            split
+        let billed = credits.values.reduce(0, +) > 0
+        let models = total.keys.map { model -> ModelUse in
+            let charged = credits[model] ?? 0
+            if total[model] == 0, charged > 0 {
+                return ModelUse(model: model, credits: charged)
+            }
+            return split
                 ? ModelUse(
                     model: model,
                     inputTokens: input[model] ?? 0,
-                    outputTokens: output[model] ?? 0
+                    outputTokens: output[model] ?? 0,
+                    credits: charged
                 )
-                : ModelUse(model: model, totalTokens: total[model] ?? 0)
+                : ModelUse(model: model, totalTokens: total[model] ?? 0, credits: charged)
         }
         // Ordered by whatever the bars are shares of, so the longest bar is
         // always the top row. Sorting a split breakdown by total would sort it
         // by cache reads, which is the one thing the bar deliberately is not
         // about.
         .sorted {
+            if billed {
+                return $0.credits != $1.credits ? $0.credits > $1.credits : $0.model < $1.model
+            }
             let a = split ? $0.outputTokens : $0.totalTokens
             let b = split ? $1.outputTokens : $1.totalTokens
             return a != b ? a > b : $0.model < $1.model

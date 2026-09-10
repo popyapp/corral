@@ -29,6 +29,13 @@ final class SessionActivityStore {
             // CLI one.
             .cursorAgent: CursorCLISessionActivityReader(),
             .cursor: CursorSessionActivityReader(),
+            // One reader for two roots: a `kiro-cli` you typed, and the
+            // engines Kiro Crew starts for its own sessions, which Corral lists
+            // under the Crew app. Both write the same session files, and the
+            // lock in each names a pid the group already contains.
+            .kiroCLI: KiroSessionActivityReader(),
+            .kiroCrew: KiroSessionActivityReader(),
+            .antigravity: AntigravitySessionActivityReader(),
         ],
         ttl: TimeInterval = 3
     ) {
@@ -60,16 +67,23 @@ final class SessionActivityStore {
         }
 
         for group in ordered {
-            guard let reader = readers[group.root.tool],
-                  let project = group.root.workingDirectory, project != "/"
-            else { continue }
+            // A group whose root is a helper — a background service, an
+            // updater that outlived its app — is not running a conversation,
+            // and a reader that matches by app rather than by project would
+            // otherwise hand the app's conversation to the wrong row.
+            guard group.root.role == .agent, let reader = readers[group.root.tool] else { continue }
+            // `/` is where a desktop app sits, and it names no project. The
+            // readers that need one say nothing; the ones that match by pid
+            // do not need it.
+            let project = group.root.workingDirectory.flatMap { $0 == "/" ? nil : $0 }
 
             let reading = reader.reading(
                 SessionLookup(
                     project: project,
                     startedAt: group.root.startedAt,
                     sessionId: sessionId(group),
-                    claimed: claimed
+                    claimed: claimed,
+                    pids: Set(group.all.map(\.pid))
                 )
             )
             guard let reading else { continue }

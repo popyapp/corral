@@ -172,8 +172,9 @@ enum FileTail {
 /// do not show, not an error the user has to deal with.
 /// Everything a reader is told about the agent it is describing.
 struct SessionLookup {
-    /// Where the agent process is running.
-    let project: String
+    /// Where the agent process is running. Nil for an app with no project of
+    /// its own — a desktop app sits at `/`, which names nothing.
+    let project: String?
     /// When the process started. A session cannot have stopped writing before
     /// its own process existed, which is what rules out abandoned logs.
     let startedAt: Date
@@ -186,6 +187,13 @@ struct SessionLookup {
     /// described by whichever of them typed last — which is worse than saying
     /// nothing, because it reads as fact.
     let claimed: Set<String>
+    /// Every pid in the group, root and descendants.
+    ///
+    /// For the one tool that does write a pid down. Kiro CLI's session lock
+    /// names the engine process holding it, and that engine is a descendant of
+    /// the agent Corral lists — so the match is exact where every other reader
+    /// has to reason from paths and times.
+    var pids: Set<pid_t> = []
 }
 
 struct SessionActivityReading {

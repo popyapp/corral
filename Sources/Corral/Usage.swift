@@ -16,6 +16,35 @@ struct UsageLimit: Equatable {
     let usedFraction: Double
 
     let resetsAt: Date?
+
+    /// The same figure as a count, when the vendor gave one.
+    ///
+    /// Claude and Codex report a percentage and nothing else; Kiro reports
+    /// credits used against a plan of so many. "312 of 500 credits left" is
+    /// what a person plans around, and a percentage of it would be throwing
+    /// the better number away.
+    var quantity: UsageQuantity? = nil
+}
+
+/// A used-of-limit pair in the vendor's own unit.
+struct UsageQuantity: Equatable {
+    let used: Double
+    let limit: Double
+    let unit: String
+
+    var remaining: Double { max(0, limit - used) }
+
+    /// Whole numbers for whole counts, one decimal otherwise.
+    static func format(_ value: Double) -> String {
+        value.rounded() == value ? String(format: "%.0f", value) : String(format: "%.1f", value)
+    }
+
+    /// "312 of 500 credits left", or "none left" past the end.
+    var remainingText: String {
+        remaining <= 0
+            ? "none left"
+            : "\(Self.format(remaining)) of \(Self.format(limit)) \(unit) left"
+    }
 }
 
 /// How full one session's context window is.

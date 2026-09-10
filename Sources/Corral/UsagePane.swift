@@ -12,6 +12,7 @@ import SwiftUI
 /// setting up. A window can offer the button.
 struct UsagePane: View {
     @EnvironmentObject private var model: CorralViewModel
+    @ObservedObject private var kiroAccount = KiroAccountSettings.shared
 
     var body: some View {
         ScrollView {
@@ -93,6 +94,10 @@ struct UsagePane: View {
                     }
                 }
                 ReportingRow(tool: .codex, name: "Codex", detail: codexReporting) {}
+                ReportingRow(tool: .kiroCLI, name: "Kiro", detail: kiroReporting) {
+                    KiroAccountButton()
+                }
+                ReportingRow(tool: .antigravity, name: "Antigravity", detail: antigravityReporting) {}
             }
             .padding(13)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -123,6 +128,27 @@ struct UsagePane: View {
         return "Nothing to set up. Codex writes its limits into its own session logs; "
             + "the newest is \(age.durationString) old, and it refreshes the next time "
             + "Codex runs."
+    }
+
+    /// Two halves. The session files are read unasked, like Codex's; the
+    /// balance is on Kiro's servers, and asking for it is the one network
+    /// call in the app, which is why it has a switch and a sentence of its own.
+    private var kiroReporting: String {
+        let sessions = KiroSessions.hasAnySession()
+            ? "Each session's context and the credits every turn cost come from Kiro "
+                + "CLI's own session files, Kiro Crew's included; nothing to set up there. "
+            : "Each session's context and what every turn cost come from Kiro CLI's own "
+                + "session files, and Corral has not found one on this Mac yet — run Kiro "
+                + "CLI or Kiro Crew once and that fills in. "
+        return sessions + KiroAccountSetup.summary()
+    }
+
+    /// Antigravity has the least to say, and saying so is still the useful part.
+    private var antigravityReporting: String {
+        "Nothing to set up, and nothing to read. Antigravity keeps its conversations "
+            + "encrypted on disk and its per-model rate limits on Google's servers. "
+            + "Corral shows what its agent last worked on, from the app's own list of "
+            + "conversations, and no more."
     }
 
     // ─ Models ───────────────────────────────────────────────────────────────
@@ -258,10 +284,29 @@ private struct AllowancePanel: View {
                     .controlSize(.small)
             }
         } else {
-            Text("\(usage.name) does not record what your account has left on this Mac.")
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.subtle)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 9) {
+                Text(unpublished)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.subtle)
+                    .fixedSize(horizontal: false, vertical: true)
+                if usage.tool.vendor == "Kiro" { KiroAccountButton() }
+            }
+        }
+    }
+
+    /// Why there is no allowance, for the vendors that have no button either.
+    private var unpublished: String {
+        switch usage.tool {
+        case .kiroCLI, .kiroCrew, .kiro:
+            return "Kiro bills in credits and keeps the balance on its servers. "
+                + KiroAccountSetup.summary()
+                + " What each turn cost is written into the session files, and is "
+                + "counted under Models."
+        case .antigravity:
+            return "Antigravity fetches its per-model rate limits from Google's servers "
+                + "when the app asks, and caches them nowhere on this Mac."
+        default:
+            return "\(usage.name) does not record what your account has left on this Mac."
         }
     }
 
@@ -324,11 +369,12 @@ private struct PaneLimitRow: View {
         switch limit.label {
         case "5-hour": return "Current session"
         case "7-day": return "All models"
-        default: return limit.label
+        default: return limit.label.prefix(1).uppercased() + limit.label.dropFirst()
         }
     }
 
     private var remaining: String {
+        if let quantity = limit.quantity { return quantity.remainingText }
         let left = (1 - limit.usedFraction) * 100
         return left <= 0 ? "none left" : String(format: "%.0f%% left", left.rounded())
     }
@@ -340,6 +386,21 @@ private struct PaneLimitRow: View {
         formatter.timeStyle = .short
         return formatter
     }()
+}
+
+/// The switch for asking Kiro, wherever the Usage tab explains it.
+private struct KiroAccountButton: View {
+    @ObservedObject private var settings = KiroAccountSettings.shared
+
+    var body: some View {
+        if settings.isEnabled {
+            Button("Stop Asking Kiro") { KiroAccountSetup.turnOff() }
+                .controlSize(.small)
+        } else {
+            Button("\(KiroAccountSetup.title)…") { KiroAccountSetup.offer() }
+                .controlSize(.small)
+        }
+    }
 }
 
 /// One tool's reporting: what it is doing, and the way to change it if there is
@@ -400,9 +461,11 @@ private struct EmptyModelPanel: View {
     }
 
     private var reason: String {
-        Self.counted.contains(usage.name)
-            ? "Nothing in the last seven days."
-            : "Corral does not count models for \(usage.name)."
+        if Self.counted.contains(usage.name) { return "Nothing in the last seven days." }
+        if usage.tool == .antigravity {
+            return "Antigravity's conversations are encrypted on disk, so there is nothing to count."
+        }
+        return "Corral does not count models for \(usage.name)."
     }
 }
 
@@ -437,9 +500,7 @@ private struct ModelPanel: View {
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(Theme.subtle)
                         Spacer()
-                        Text(breakdown.isSplit
-                             ? "\(ModelUse.compact(breakdown.totalOutput)) produced"
-                             : "\(ModelUse.compact(breakdown.totalTokens)) tokens")
+                        Text(caption(for: breakdown))
                             .font(.system(size: 10.5))
                             .monospacedDigit()
                             .foregroundStyle(Theme.faint)
@@ -472,7 +533,18 @@ private struct ModelPanel: View {
     /// session can sit inside the week without being inside the afternoon, and
     /// the two windows then disagree. "Tokens" is true of both.
     private var basis: String {
-        usage.breakdowns.allSatisfy(\.isSplit) ? "output" : "tokens"
+        if usage.breakdowns.contains(where: \.isCredits) { return "credits" }
+        return usage.breakdowns.allSatisfy(\.isSplit) ? "output" : "tokens"
+    }
+
+    /// The window's total, in the unit its bars are drawn in.
+    private func caption(for breakdown: ModelBreakdown) -> String {
+        if breakdown.isCredits {
+            return "\(ModelUse.compact(credits: breakdown.totalCredits)) credits"
+        }
+        return breakdown.isSplit
+            ? "\(ModelUse.compact(breakdown.totalOutput)) produced"
+            : "\(ModelUse.compact(breakdown.totalTokens)) tokens"
     }
 
     /// The window in the words someone would use for it.
@@ -509,9 +581,7 @@ private struct ModelRow: View {
             )
             .frame(maxWidth: .infinity)
 
-            Text(use.isSplit
-                 ? "\(use.outputSummary) out · \(use.inputSummary) in"
-                 : "\(ModelUse.compact(use.totalTokens)) total")
+            Text(figures)
                 .font(.system(size: 10.5))
                 .monospacedDigit()
                 .foregroundStyle(Theme.faint)
@@ -522,13 +592,30 @@ private struct ModelRow: View {
                 .monospacedDigit()
                 .frame(width: 40, alignment: .trailing)
         }
-        .help(use.isSplit
-              ? "\(use.model)\n\(use.outputTokens) tokens produced\n"
+        .help(detail)
+    }
+
+    /// The numbers, in whichever unit the source wrote.
+    private var figures: String {
+        if use.totalTokens == 0, use.credits > 0 { return "\(use.creditsSummary) credits" }
+        return use.isSplit
+            ? "\(use.outputSummary) out · \(use.inputSummary) in"
+            : "\(ModelUse.compact(use.totalTokens)) total"
+    }
+
+    private var detail: String {
+        if use.totalTokens == 0, use.credits > 0 {
+            // Kiro charges a turn in credits and writes its token fields as
+            // zero, so credits are the whole of what there is to say.
+            return "\(use.model)\n\(use.creditsSummary) credits, as Kiro charged them"
+        }
+        return use.isSplit
+            ? "\(use.model)\n\(use.outputTokens) tokens produced\n"
                 + "\(use.inputTokens) read, cache included"
-              // Codex reports one number per session and no database of its own
-              // splits it, so this says total rather than inventing a share of
-              // it that would look like output.
-              : "\(use.model)\n\(use.totalTokens) tokens, read and produced together")
+            // Codex reports one number per session and no database of its own
+            // splits it, so this says total rather than inventing a share of
+            // it that would look like output.
+            : "\(use.model)\n\(use.totalTokens) tokens, read and produced together"
     }
 }
 

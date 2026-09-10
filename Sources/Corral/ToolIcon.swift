@@ -52,6 +52,14 @@ enum ToolIcon {
         case .cursor, .cursorAgent: return ["Cursor"]
         case .windsurf: return ["Windsurf"]
         case .copilot: return ["GitHub Copilot", "Visual Studio Code"]
+        // The CLI ships as an app bundle of its own, so a running agent
+        // usually resolves through its executable path before reaching here;
+        // this is for a symlinked or copied binary. The IDE and Crew are the
+        // next best pictures of the same product.
+        case .kiroCLI: return ["Kiro CLI", "Kiro", "KiroCrew"]
+        case .kiroCrew: return ["KiroCrew", "Kiro Crew", "Kiro"]
+        case .kiro: return ["Kiro"]
+        case .antigravity: return ["Antigravity", "Antigravity IDE"]
         }
     }
 

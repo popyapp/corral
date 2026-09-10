@@ -6,9 +6,9 @@
 
 **Activity Monitor for Your Local AI Agents**
 
-A free, open-source, native macOS app that shows you every Claude Code, Codex
-and Cursor process on your machine — what project it belongs to, how long it has
-been sitting there, and how much of your Mac it is holding.
+A free, open-source, native macOS app that shows you every Claude Code, Codex,
+Cursor, Kiro and Antigravity process on your machine — what project it belongs
+to, how long it has been sitting there, and how much of your Mac it is holding.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?style=flat-square&logo=apple)
@@ -93,7 +93,8 @@ idle, what it spawned, and what it is costing you.
   remove. On the machine this was written on that came to 14 GB.
 
 Supported: **Claude Code**, **Claude** (desktop), **Codex**, **Cursor** and its
-CLI agent, **Windsurf**.
+CLI agent, **Windsurf**, **Kiro CLI**, **Kiro Crew**, **Kiro** (the IDE) and
+**Antigravity**.
 
 ## What the colours mean
 
@@ -148,6 +149,8 @@ leaving a gap:
 | **Codex** | from its own rollout logs, unasked | yes |
 | **Claude Code** | needs the status line, below | yes |
 | **Cursor** | not published anywhere on your Mac | needs the status line |
+| **Kiro CLI**, **Kiro Crew** | asked of Kiro's servers, if you turn that on | yes, from its session files |
+| **Antigravity** | not published; conversations are encrypted | no |
 
 Codex writes its limits into every session log it keeps, so those are free. The
 other two record nothing — but both hand their figures to a status line command
@@ -168,6 +171,32 @@ hooks — the same seven events Claude Code has — their payload carries sessio
 and tool metadata and no usage at all, so a status line would add nothing. What
 refreshes Codex is running Codex.
 
+Kiro is the third kind. Kiro CLI writes every session to
+`~/.kiro/sessions/cli/` — the working directory, how full the window is and
+what each turn cost, in credits — and a lock file naming the process holding
+it. That pid is a descendant of the `kiro-cli` Corral lists, so the match is
+exact where every other reader has to reason from paths and times. Kiro Crew's
+agents are Kiro CLI engines it starts per session, so they read the same way
+and are listed under the Crew app.
+
+What the account has left is not on this Mac at all, and this is the one place
+Corral will use the network — off until you turn it on, from **Report Usage to
+Corral → Ask Kiro for Account Usage** or the Usage tab. It asks first, in a
+dialog that says exactly what happens: every five minutes Corral reads the
+sign-in token Kiro CLI keeps in its own store, sends one HTTPS request to the
+fixed AWS host the Kiro IDE itself uses (`GetUsageLimits`), and keeps the
+numbers that come back — credits used, the plan's limit, when it resets, any
+bonus pool. The token is held for one request and never written down or
+logged; the request follows no redirects; Corral never refreshes the token, so
+when it runs out the panel says to run Kiro CLI, which does. Turning it off
+forgets the figures.
+
+Antigravity keeps its conversations encrypted — the bytes are random from the
+first one — and fetches its per-model rate limits from Google when the app
+asks. What it does leave readable is its own list of conversations, with a
+title, a workspace and the time of the last write, and that is what Corral
+shows: what the agent last worked on, in which project, and how long ago.
+
 What Corral keeps out of what those tools send is the session id, the working
 directory, the context size and any limit percentages. Not the transcript path,
 not the branch, not the pull request — the payload describes what you are
@@ -187,6 +216,11 @@ it and the tokens it took, so the arithmetic is Corral's own.
 It is a share of **output**, and it is labelled as one. Input is mostly cache
 reads — 621 million of them against 2.7 million produced tokens, on the machine
 this was written on — so a bar drawn on the total would be a bar about caching.
+
+Kiro's is counted in **credits**, because that is what Kiro writes: every turn
+carries the metering entries it was billed, and its token fields are zero. The
+bars for Kiro are shares of credits and say so. Antigravity's are not counted
+at all — there is nothing readable to count — and the panel says that too.
 
 Codex is read from two places. Its rollout logs give a turn-by-turn split and
 are used wherever they exist; alongside them it now keeps a SQLite database with
@@ -391,7 +425,17 @@ It reads the *argument* vector and deliberately stops there — the environment
 block sits right after it in the same buffer and is full of API keys, so Corral
 never reads that far.
 
-Nothing leaves your machine. There is no network code in this app.
+Nothing leaves your machine, with one exception you have to turn on yourself:
+**Ask Kiro for Account Usage** sends Kiro CLI's own sign-in token to Kiro's
+servers to read the account's credit balance, and nothing else. It is off by
+default, asks before it starts, and is described in full under
+[Usage](#usage). Every other line of the app is file reads.
+
+## Something wrong?
+
+[Open an issue](https://github.com/popyapp/corral/issues). The same link is
+under **Report a Problem…** in the app's Help menu and in the menu bar item,
+and About Corral names the exact commit you are running.
 
 ## Tests
 

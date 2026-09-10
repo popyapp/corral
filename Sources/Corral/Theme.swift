@@ -21,6 +21,10 @@ enum Theme {
             return Color(red: 0.55, green: 0.58, blue: 0.64)   // graphite
         case .windsurf:
             return Color(red: 0.30, green: 0.70, blue: 0.85)   // cyan
+        case .kiroCLI, .kiroCrew, .kiro:
+            return Color(red: 0.58, green: 0.36, blue: 0.94)   // violet
+        case .antigravity:
+            return Color(red: 0.25, green: 0.62, blue: 0.96)   // sky blue
         }
     }
 

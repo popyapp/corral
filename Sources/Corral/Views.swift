@@ -964,7 +964,7 @@ private struct EmptyState: View {
                 .foregroundStyle(Theme.Severity.active.color)
             Text("Nothing running")
                 .font(.system(size: 15, weight: .medium))
-            Text("No Claude, Codex or Cursor processes are using your machine.")
+            Text("No Claude, Codex, Cursor, Kiro or Antigravity processes are using your machine.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.faint)
             Spacer()

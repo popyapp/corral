@@ -48,9 +48,10 @@ enum ToolCatalog {
         if path.contains("/.cursor/") || path.contains("/cursor-agent/") { return true }
         if electronApps.contains(where: { path.contains($0.bundle) }) { return true }
         if path.contains("/ChatGPT.app/") { return true }
+        if path.contains("/Kiro CLI.app/") || path.contains("/kiro-cli/") { return true }
         let name = (path as NSString).lastPathComponent
         return name == "claude" || name == "codex" || name.hasPrefix("codex-")
-            || name == "cursor-agent"
+            || name == "cursor-agent" || name.hasPrefix("kiro-cli") || name == "kiro_cli_desktop"
     }
 
     static func identify(_ raw: ProcessScanner.Raw) -> Match? {
@@ -61,6 +62,7 @@ enum ToolCatalog {
         if let match = electronApp(path: path, raw: raw) { return match }
         if let match = codex(path: path, raw: raw) { return match }
         if let match = cursorAgent(path: path, raw: raw) { return match }
+        if let match = kiroCLI(path: path, raw: raw) { return match }
         return nil
     }
 
@@ -105,6 +107,12 @@ enum ToolCatalog {
         .init(bundle: "/Claude.app/", tool: .claudeDesktop),
         .init(bundle: "/Cursor.app/", tool: .cursor),
         .init(bundle: "/Windsurf.app/", tool: .windsurf),
+        .init(bundle: "/KiroCrew.app/", tool: .kiroCrew),
+        .init(bundle: "/Kiro.app/", tool: .kiro),
+        // Google has shipped it under two bundle names; the second is the
+        // one its own updater installs beside the first.
+        .init(bundle: "/Antigravity.app/", tool: .antigravity),
+        .init(bundle: "/Antigravity IDE.app/", tool: .antigravity),
     ]
 
     /// Electron fans out into a main process plus renderers, GPU helpers and a
@@ -124,17 +132,48 @@ enum ToolCatalog {
         if path.contains("(Renderer)") || raw.arguments.contains("--type=renderer") {
             role = .renderer
         } else if path.contains("/Frameworks/") || path.contains("/Helpers/")
+            || path.contains("/Contents/Resources/")
             || raw.arguments.contains(where: { $0.hasPrefix("--type=") })
         {
             // Cursor's extension host and language servers arrive as
             // `--type=utility` / `--type=gpu-process` rather than a distinct
             // binary, so the argument decides where the name cannot.
+            //
+            // `Resources` covers the things an app carries that are not
+            // Electron at all: Kiro Crew's Python gateway and Antigravity's
+            // Go language server both live there, and both are the app's
+            // machinery rather than a second copy of the app.
             role = .helper
         } else {
             role = .agent
         }
 
-        return Match(tool: app.tool, role: role, version: electronVersion(path: path))
+        // The framework path names Chromium's version, which is only worth
+        // showing for a helper. The app's own number is in its Info.plist,
+        // and the main process is the one row a person reads it off.
+        let version = role == .agent
+            ? bundleVersion(forExecutable: path) ?? electronVersion(path: path)
+            : electronVersion(path: path)
+        return Match(tool: app.tool, role: role, version: version)
+    }
+
+    /// `CFBundleShortVersionString` of the bundle a path executes from.
+    ///
+    /// Read once per bundle and remembered: `Bundle(path:)` parses a plist,
+    /// and the inventory asks about a process only once in its life, but a
+    /// dozen helpers of one app would otherwise each parse the same file.
+    private static var bundleVersions: [String: String?] = [:]
+    private static let bundleVersionsLock = NSLock()
+
+    static func bundleVersion(forExecutable path: String) -> String? {
+        guard let bundle = ToolIcon.bundlePath(forExecutable: path) else { return nil }
+        bundleVersionsLock.lock()
+        defer { bundleVersionsLock.unlock() }
+        if let known = bundleVersions[bundle] { return known }
+        let version = Bundle(path: bundle)?
+            .object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        bundleVersions[bundle] = version
+        return version
     }
 
     /// Electron stamps its own version into the framework path
@@ -204,6 +243,41 @@ enum ToolCatalog {
         if raw.arguments.first.map({ ($0 as NSString).lastPathComponent }) == "cursor-agent" {
             return Match(tool: .cursorAgent, role: .agent, version: nil)
         }
+        return nil
+    }
+
+    // ─ Kiro CLI ─────────────────────────────────────────────────────────────
+
+    /// Kiro's terminal agent is an app bundle that is never opened as one.
+    ///
+    /// `/Applications/Kiro CLI.app/Contents/MacOS/` holds four executables and
+    /// `~/.local/bin` symlinks to them. `kiro-cli` is what a person runs; it
+    /// execs `kiro-cli-chat chat`, which runs a bundled `bun` on a `tui.js`
+    /// out of `~/Library/Application Support/kiro-cli/`, which in turn runs
+    /// `kiro-cli-chat acp` — the engine that actually holds the session and
+    /// writes its lock file. All of that is one agent to the person who typed
+    /// `kiro-cli`, so only the front process is the agent and the rest are
+    /// helpers under it. Another program driving `kiro-cli acp` directly —
+    /// Kiro Crew does, per session — has the same shape one level down.
+    ///
+    /// `kiro_cli_desktop` is a background service the installer registers with
+    /// launchd for shell integration and autocomplete. It is not an agent and
+    /// never has a project, but it is Kiro holding memory, so it is listed
+    /// under the tool rather than left to look like an anonymous daemon.
+    private static func kiroCLI(path: String, raw: ProcessScanner.Raw) -> Match? {
+        let name = (path as NSString).lastPathComponent
+        let inBundle = path.contains("/Kiro CLI.app/")
+        let version = inBundle ? bundleVersion(forExecutable: path) : nil
+
+        if name == "kiro-cli" { return Match(tool: .kiroCLI, role: .agent, version: version) }
+        if name == "kiro-cli-chat" || name == "kiro-cli-term" || name == "kiro_cli_desktop" {
+            return Match(tool: .kiroCLI, role: .helper, version: version)
+        }
+        // The bundled runtime: `…/Application Support/kiro-cli/bun tui.js chat`.
+        if path.contains("/kiro-cli/") && !path.contains("/kiro-cli/versions/") {
+            return Match(tool: .kiroCLI, role: .helper, version: nil)
+        }
+        if inBundle { return Match(tool: .kiroCLI, role: .helper, version: version) }
         return nil
     }
 

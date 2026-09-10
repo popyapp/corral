@@ -97,6 +97,11 @@ enum AboutPanel {
             attributes: [.font: body, .foregroundColor: NSColor.tertiaryLabelColor]
         ))
         text.append(link("github.com/popyapp/corral", BuildInfo.repositoryURL))
+        text.append(NSAttributedString(
+            string: "  ·  ",
+            attributes: [.font: body, .foregroundColor: NSColor.tertiaryLabelColor]
+        ))
+        text.append(link("Report a problem", BuildInfo.supportURL))
 
         let centred = NSMutableParagraphStyle()
         centred.alignment = .center

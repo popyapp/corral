@@ -20,6 +20,17 @@ enum CLI {
             ? inventory.groups.filter { matches($0, needle!) }
             : inventory.groups
 
+        // The per-model count runs on another thread and takes a few seconds
+        // on a machine with a week of transcripts. A script asking for JSON
+        // is asking for the figures, so it gets a bounded wait for them; the
+        // table is for a person and does not show them anyway.
+        if json {
+            let deadline = Date().addingTimeInterval(8)
+            while !inventory.hasCountedModels && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }
+
         json ? printJSON(inventory, groups: groups)
              : printTable(inventory, groups: groups, search: needle)
     }
@@ -227,6 +238,16 @@ enum CLI {
             // Account-level, so it sits beside the agents rather than inside
             // one: this is the budget they are all spending from.
             "usage": inventory.accountUsages.map(describe),
+            // What each model did, per tool and window, counted off this
+            // machine's session logs. Shares of output for tools that count
+            // tokens, of credits for one that bills them; `basis` says which.
+            "models": inventory.modelBreakdowns.map { tool, breakdowns in
+                [
+                    "tool": tool.rawValue,
+                    "vendor": tool.vendor,
+                    "windows": breakdowns.map(describe),
+                ] as [String: Any]
+            },
         ]
         guard let data = try? JSONSerialization.data(
             withJSONObject: payload,
@@ -285,6 +306,27 @@ enum CLI {
         return dict
     }
 
+    /// One window of a model breakdown.
+    static func describe(_ breakdown: ModelBreakdown) -> [String: Any] {
+        [
+            "window": breakdown.window,
+            "basis": breakdown.basis,
+            "observed_at": ISO8601DateFormatter().string(from: breakdown.observedAt),
+            "models": breakdown.models.map { use -> [String: Any] in
+                var out: [String: Any] = [
+                    "model": use.model,
+                    "share": breakdown.share(use),
+                    "input_tokens": use.inputTokens,
+                    "output_tokens": use.outputTokens,
+                    "total_tokens": use.totalTokens,
+                    "split": use.isSplit,
+                ]
+                if use.credits > 0 { out["credits"] = use.credits }
+                return out
+            },
+        ]
+    }
+
     /// An account's allowance, with the age of the reading attached.
     ///
     /// `observed_at` is not decoration. These figures are a by-product of the
@@ -303,6 +345,11 @@ enum CLI {
                 ]
                 if let resets = limit.resetsAt {
                     out["resets_at"] = ISO8601DateFormatter().string(from: resets)
+                }
+                if let quantity = limit.quantity {
+                    out["used"] = quantity.used
+                    out["limit"] = quantity.limit
+                    out["unit"] = quantity.unit
                 }
                 return out
             },

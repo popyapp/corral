@@ -43,7 +43,8 @@ struct CursorCLISessionActivityReader: SessionActivityReader {
     }
 
     func reading(_ lookup: SessionLookup) -> SessionActivityReading? {
-        let folder = root.appendingPathComponent(Self.directoryName(for: lookup.project))
+        guard let project = lookup.project else { return nil }
+        let folder = root.appendingPathComponent(Self.directoryName(for: project))
         let sessions = (try? FileManager.default.contentsOfDirectory(
             at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
         )) ?? []
@@ -51,7 +52,7 @@ struct CursorCLISessionActivityReader: SessionActivityReader {
         var best: SessionActivityReading?
         for session in sessions where !lookup.claimed.contains(session.path) {
             guard let meta = Self.meta(of: session),
-                  meta.cwd == lookup.project,
+                  meta.cwd == project,
                   meta.updatedAt >= lookup.startedAt
             else { continue }
 
