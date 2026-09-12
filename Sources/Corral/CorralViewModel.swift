@@ -197,7 +197,8 @@ final class CorralViewModel: ObservableObject {
 
         for usage in accountUsages {
             for limit in usage.limits {
-                offer(limit.usedFraction, "\(usage.tool.displayName) \(limit.label)", usage.tool)
+                let pool = limit.pool.map { " \($0)" } ?? ""
+                offer(limit.usedFraction, "\(usage.tool.displayName)\(pool) \(limit.label)", usage.tool)
             }
         }
         for row in contexts {

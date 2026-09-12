@@ -239,13 +239,17 @@ breakdown that draws on it is about **tokens** rather than output and says
 own, which is it saying the JSONL files are on their way out; when that day
 comes, this keeps working.
 
-A *limit* per model is a different thing, and it is not available. Claude Code
-does track `seven_day_opus` and `seven_day_sonnet`, but writes neither to disk
-nor to its status line; every limit Codex reports is stamped `limit_id: "codex"`
-with no model in it. The vendors also weight models against each other in ways
+A *limit* per model is a different thing, and mostly it is not available.
+Claude Code does track `seven_day_opus` and `seven_day_sonnet`, but writes
+neither to disk nor to its status line. Codex can meter a model family on an
+allowance of its own — its protocol names each pool with a `limit_id` and a
+`limit_name`, and a turn reports the pool the model it ran on draws from — so
+Corral keeps the newest reading per pool across recent sessions and shows a
+second pool as its own set of bars, named after it. On the machine this was
+written on every turn has reported the one default pool, which is what most
+accounts will see. The vendors also weight models against each other in ways
 nothing local can see, so a model with 40% of the output has not necessarily
-taken 40% of the week — and Corral does not say it has. Reading those would
-mean asking the vendor's servers, and the line below would stop being true.
+taken 40% of the week — and Corral does not say it has.
 
 Still no network. These are files the tools put on your machine.
 

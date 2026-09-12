@@ -52,52 +52,106 @@ struct CodexUsageReader: UsageReader {
         self.auth = auth
     }
 
-    func usage() -> ToolUsage? {
+    func usage(now: Date = Date()) -> ToolUsage? {
+        // One account can be metered in more than one pool. Codex names each
+        // with a `limit_id`, and a turn reports the pool the model it ran on
+        // draws from — so the newest turn alone would show only the pool of
+        // whatever ran last, and a Pro-model allowance sitting at 95% would
+        // vanish the moment a cheaper model took a turn. Every recent rollout
+        // is read and the newest reading per pool is kept.
+        var newest: [String: Snapshot] = [:]
         for file in CodexRollouts.newest(under: root) {
-            guard let found = Self.scan(file) else { continue }
-            // The plan Codex signed in with beats the plan a turn once saw.
-            // A rollout says what the account was when the turn ran; someone
-            // who upgraded yesterday and has not run Codex since would read
-            // "free" under numbers that are now a Plus account's, for as long
-            // as they did not open Codex — which is exactly the moment they
-            // are looking at this panel to see what changed.
-            guard let plan = CodexAccount.plan(in: auth) else { return found }
-            return ToolUsage(
-                tool: found.tool, limits: found.limits, plan: plan, observedAt: found.observedAt
-            )
+            for snapshot in Self.snapshots(in: file) {
+                if let seen = newest[snapshot.pool], seen.at >= snapshot.at { continue }
+                newest[snapshot.pool] = snapshot
+            }
         }
-        return nil
+        guard let freshest = newest.values.max(by: { $0.at < $1.at }) else { return nil }
+
+        // A pool not heard from in longer than its own longest window has
+        // reset since, and its old percentage says nothing about now. The
+        // freshest reading is kept whatever its age: it is dated on the
+        // panel, and a stale figure with its date is better than no figure.
+        let pools = newest.values
+            .filter { $0.pool == freshest.pool || now.timeIntervalSince($0.at) <= $0.longestWindow }
+            .sorted { a, b in
+                if (a.pool == Self.defaultPool) != (b.pool == Self.defaultPool) {
+                    return a.pool == Self.defaultPool
+                }
+                return (a.name ?? a.pool) < (b.name ?? b.pool)
+            }
+
+        // The plan Codex signed in with beats the plan a turn once saw. A
+        // rollout says what the account was when the turn ran; someone who
+        // upgraded yesterday and has not run Codex since would read "free"
+        // under numbers that are now a Plus account's, for as long as they
+        // did not open Codex — which is exactly the moment they are looking
+        // at this panel to see what changed.
+        return ToolUsage(
+            tool: .codex,
+            limits: pools.flatMap(\.limits),
+            plan: CodexAccount.plan(in: auth) ?? freshest.plan,
+            observedAt: freshest.at
+        )
     }
 
-    /// The newest `token_count` entry in one rollout.
+    func usage() -> ToolUsage? { usage(now: Date()) }
+
+    /// The default pool, the one every account has and the only one most
+    /// accounts ever report. Its windows carry no pool name, because a name
+    /// on the only thing there is would be noise.
+    static let defaultPool = "codex"
+
+    /// One `rate_limits` reading, with where and when it was taken.
+    struct Snapshot {
+        let pool: String
+        /// What Codex calls the pool, when it is not the default: its own
+        /// `limit_name`, else the model it is a quota for, else the id.
+        let name: String?
+        let at: Date
+        let plan: String?
+        let limits: [UsageLimit]
+
+        /// The longest window in the reading, in seconds.
+        var longestWindow: TimeInterval {
+            limits.compactMap { UsageWindow.minutes(label: $0.label) }.max()
+                .map { TimeInterval($0) * 60 } ?? 0
+        }
+    }
+
+    /// The newest reading per pool in one rollout.
     ///
-    /// Read from the end, and the first one wins: earlier entries in the same
-    /// file describe the same account at an earlier point in the session, which
-    /// is strictly worse information.
-    static func scan(_ file: URL) -> ToolUsage? {
+    /// Read from the end, and the first of each pool wins: earlier entries in
+    /// the same file describe the same pool at an earlier point in the
+    /// session, which is strictly worse information.
+    static func snapshots(in file: URL) -> [Snapshot] {
+        var found: [String: Snapshot] = [:]
         for line in FileTail.lines(of: file) {
             guard let payload = tokenCount(line),
                   let raw = payload.body["rate_limits"] as? [String: Any]
             else { continue }
-            let limits = Self.limits(from: raw)
+            let pool = (raw["limit_id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? defaultPool
+            guard found[pool] == nil else { continue }
+            let name = pool == defaultPool
+                ? nil
+                : (raw["limit_name"] as? String) ?? (raw["normal_model_slug"] as? String) ?? pool
+            let limits = Self.limits(from: raw, pool: name)
             // An entry with no window in it — a plan with nothing metered, or a
             // shape we do not recognise — is not a usage reading. Keep looking
             // rather than reporting an empty gauge as if it meant zero.
             guard !limits.isEmpty else { continue }
-            return ToolUsage(
-                tool: .codex,
-                limits: limits,
-                plan: raw["plan_type"] as? String,
-                observedAt: payload.at
+            found[pool] = Snapshot(
+                pool: pool, name: name, at: payload.at,
+                plan: raw["plan_type"] as? String, limits: limits
             )
         }
-        return nil
+        return Array(found.values)
     }
 
     /// Codex reports one or two windows: `primary` is the long one every plan
     /// has, `secondary` the shorter burst window, and it is null on plans that
     /// do not meter one.
-    static func limits(from raw: [String: Any]) -> [UsageLimit] {
+    static func limits(from raw: [String: Any], pool: String? = nil) -> [UsageLimit] {
         ["secondary", "primary"].compactMap { key in
             guard let window = raw[key] as? [String: Any],
                   let used = JSONNumber.double(window["used_percent"])
@@ -106,7 +160,8 @@ struct CodexUsageReader: UsageReader {
                 label: UsageWindow.label(minutes: JSONNumber.int(window["window_minutes"]) ?? 0),
                 usedFraction: used / 100,
                 resetsAt: JSONNumber.double(window["resets_at"])
-                    .map { Date(timeIntervalSince1970: $0) }
+                    .map { Date(timeIntervalSince1970: $0) },
+                pool: pool
             )
         }
     }

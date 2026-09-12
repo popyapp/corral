@@ -366,11 +366,14 @@ private struct PaneLimitRow: View {
     }
 
     private var title: String {
+        let base: String
         switch limit.label {
-        case "5-hour": return "Current session"
-        case "7-day": return "All models"
-        default: return limit.label.prefix(1).uppercased() + limit.label.dropFirst()
+        case "5-hour": base = "Current session"
+        case "7-day": base = "All models"
+        default: base = limit.label.prefix(1).uppercased() + limit.label.dropFirst()
         }
+        // A second pool is a second allowance, and its windows say whose.
+        return limit.pool.map { "\($0) · \(base)" } ?? base
     }
 
     private var remaining: String {

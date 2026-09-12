@@ -382,11 +382,13 @@ private struct LimitBlock: View {
     /// The tools name their windows by length; a person names them by what
     /// they are for. Only the two that have an ordinary name get one.
     private var title: String {
+        let base: String
         switch limit.label {
-        case "5-hour": return "Current session"
-        case "7-day": return "All models"
-        default: return limit.label.prefix(1).uppercased() + limit.label.dropFirst()
+        case "5-hour": base = "Current session"
+        case "7-day": base = "All models"
+        default: base = limit.label.prefix(1).uppercased() + limit.label.dropFirst()
         }
+        return limit.pool.map { "\($0) · \(base)" } ?? base
     }
 
     /// An absolute time, not "in 20.6d". A reset is something you plan around,

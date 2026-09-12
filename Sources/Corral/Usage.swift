@@ -17,6 +17,17 @@ struct UsageLimit: Equatable {
 
     let resetsAt: Date?
 
+    /// Which pool of the account this window belongs to, when there is more
+    /// than one.
+    ///
+    /// Codex can meter a model family on its own allowance — its protocol
+    /// names each quota with a `limit_id` and a `limit_name`, and a turn
+    /// reports the pool it drew on. Most accounts have one pool and this is
+    /// nil; where there are several, each window says whose it is, because
+    /// "5-hour: 80% used" is a different fact for the Pro model than for the
+    /// one you are actually typing at.
+    var pool: String? = nil
+
     /// The same figure as a count, when the vendor gave one.
     ///
     /// Claude and Codex report a percentage and nothing else; Kiro reports
