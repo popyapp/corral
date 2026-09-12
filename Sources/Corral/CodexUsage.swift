@@ -45,14 +45,26 @@ enum CodexRollouts {
 struct CodexUsageReader: UsageReader {
 
     private let root: URL
+    private let auth: URL
 
-    init(root: URL = CodexRollouts.defaultRoot) {
+    init(root: URL = CodexRollouts.defaultRoot, auth: URL = CodexAccount.defaultAuth) {
         self.root = root
+        self.auth = auth
     }
 
     func usage() -> ToolUsage? {
         for file in CodexRollouts.newest(under: root) {
-            if let found = Self.scan(file) { return found }
+            guard let found = Self.scan(file) else { continue }
+            // The plan Codex signed in with beats the plan a turn once saw.
+            // A rollout says what the account was when the turn ran; someone
+            // who upgraded yesterday and has not run Codex since would read
+            // "free" under numbers that are now a Plus account's, for as long
+            // as they did not open Codex — which is exactly the moment they
+            // are looking at this panel to see what changed.
+            guard let plan = CodexAccount.plan(in: auth) else { return found }
+            return ToolUsage(
+                tool: found.tool, limits: found.limits, plan: plan, observedAt: found.observedAt
+            )
         }
         return nil
     }
@@ -108,6 +120,57 @@ struct CodexUsageReader: UsageReader {
               let at = ClaudeSessionActivityReader.timestamp(record["timestamp"])
         else { return nil }
         return (payload, at)
+    }
+}
+
+// ─ The plan, from the sign-in ───────────────────────────────────────────────
+
+/// What Codex signed in as.
+///
+/// Codex keeps its sign-in in `~/.codex/auth.json`, and the identity token in
+/// it is a JWT whose payload names the ChatGPT plan — `chatgpt_plan_type`,
+/// under the `https://api.openai.com/auth` claim. That file is refreshed on
+/// every login and token renewal, so it knows about an upgrade the moment
+/// Codex does, where the rollouts only learn on the next turn.
+///
+/// Only the one claim is read. The token is not verified — nothing is being
+/// trusted on the strength of it, it is a label for a pill — and it is not
+/// held: the payload is decoded, the plan copied out, and the rest dropped.
+/// Nothing here is sent anywhere.
+enum CodexAccount {
+
+    static var defaultAuth: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/auth.json")
+    }
+
+    static func plan(in auth: URL = defaultAuth) -> String? {
+        guard let data = try? Data(contentsOf: auth),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tokens = root["tokens"] as? [String: Any],
+              let token = tokens["id_token"] as? String
+        else { return nil }
+        return plan(inIdentityToken: token)
+    }
+
+    /// The plan claim out of a JWT, or nothing.
+    static func plan(inIdentityToken token: String) -> String? {
+        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3, let payload = base64URLDecode(String(parts[1])),
+              let claims = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+              let auth = claims["https://api.openai.com/auth"] as? [String: Any],
+              let plan = auth["chatgpt_plan_type"] as? String, !plan.isEmpty
+        else { return nil }
+        return plan
+    }
+
+    /// JWTs use the URL-safe alphabet and drop the padding; Foundation wants
+    /// the standard one, padded.
+    private static func base64URLDecode(_ text: String) -> Data? {
+        var standard = text
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while standard.count % 4 != 0 { standard += "=" }
+        return Data(base64Encoded: standard)
     }
 }
 

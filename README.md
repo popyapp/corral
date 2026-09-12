@@ -155,7 +155,10 @@ leaving a gap:
 | **Kiro CLI**, **Kiro Crew** | asked of Kiro's servers, if you turn that on | yes, from its session files |
 | **Antigravity** | not published; conversations are encrypted | no |
 
-Codex writes its limits into every session log it keeps, so those are free. The
+Codex writes its limits into every session log it keeps, so those are free —
+and the plan on the pill comes from its sign-in file rather than from the last
+turn, so an upgrade shows the day it happens rather than the next time Codex
+runs. The
 other two record nothing — but both hand their figures to a status line command
 on every update, and Corral can be that command. Turn it on from the menu bar
 item, **Report Usage to Corral**, or from the Usage tab. It asks first, shows

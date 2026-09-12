@@ -100,6 +100,36 @@ final class UsageTests: XCTestCase {
         XCTAssertNil(CodexContext.use(payload))
     }
 
+    /// The plan comes from the sign-in, not from the last turn.
+    ///
+    /// A real account upgraded from free to Plus read "free" for two days,
+    /// because the newest rollout was from before and Codex had not been run
+    /// since. The identity token in auth.json knew the same day.
+    func testThePlanIsReadFromTheSignInRatherThanTheLastTurn() throws {
+        // A JWT with the one claim that matters, unsigned — the reader does
+        // not verify it, so the signature can be anything.
+        let payload = #"{"https://api.openai.com/auth":{"chatgpt_plan_type":"plus","chatgpt_account_id":"x"}}"#
+        let encoded = Data(payload.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let token = "eyJhbGciOiJSUzI1NiJ9.\(encoded).sig"
+        XCTAssertEqual(CodexAccount.plan(inIdentityToken: token), "plus")
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("corral-codex-auth-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let auth = dir.appendingPathComponent("auth.json")
+        try #"{"auth_mode":"chatgpt","tokens":{"id_token":"\#(token)","refresh_token":"never-read"}}"#
+            .write(to: auth, atomically: true, encoding: .utf8)
+        XCTAssertEqual(CodexAccount.plan(in: auth), "plus")
+
+        XCTAssertNil(CodexAccount.plan(in: dir.appendingPathComponent("missing.json")))
+        XCTAssertNil(CodexAccount.plan(inIdentityToken: "not.a.jwt"))
+        XCTAssertNil(CodexAccount.plan(inIdentityToken: "eyJ.\(encoded)"))
+    }
+
     // ─ Claude Code ──────────────────────────────────────────────────────────
 
     /// Everything the model read is in the window, cache included — the cached
