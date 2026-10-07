@@ -324,15 +324,19 @@ final class KiroModelTally {
     private let root: URL
     private var byFile: [String: [ModelTurn]] = [:]
     private var stamps: [String: (size: Int, modified: Date)] = [:]
+    private var cutoff = Date.distantPast
 
     init(root: URL = KiroSessions.defaultRoot) {
         self.root = root
     }
 
-    var turns: [ModelTurn] { byFile.values.flatMap { $0 } }
+    /// Filtered here rather than when a file is read: an unchanged file is
+    /// not read again, and the window moves on without it.
+    var turns: [ModelTurn] { byFile.values.flatMap { $0 }.filter { $0.at >= cutoff } }
 
     func refresh(now: Date = Date(), horizon: TimeInterval = 7 * 86_400) {
         let cutoff = now.addingTimeInterval(-horizon)
+        self.cutoff = cutoff
         let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
         let files = (try? FileManager.default.contentsOfDirectory(
             at: root, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
@@ -347,7 +351,7 @@ final class KiroModelTally {
             let path = url.path
             live.insert(path)
             if let known = stamps[path], known.size == size, known.modified == modified { continue }
-            byFile[path] = (KiroSessionFile.read(url)?.modelTurns ?? []).filter { $0.at >= cutoff }
+            byFile[path] = KiroSessionFile.read(url)?.modelTurns ?? []
             stamps[path] = (size, modified)
         }
 
