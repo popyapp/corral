@@ -113,8 +113,17 @@ enum StatusLine {
     /// needs four numbers and a session id, so four numbers and a session id
     /// are what it keeps.
     static func run(tool: Tool) {
-        guard let data = try? FileHandle.standardInput.readToEnd(),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        // Typed into a terminal, nothing is ever coming — say what this is for
+        // rather than sit there looking hung.
+        if isatty(STDIN_FILENO) != 0 {
+            FileHandle.standardError.write(Data("""
+            Corral --statusline is run by Claude Code or Cursor, which hand it a
+            JSON object on stdin. Turn it on from Corral's menu: Report Usage to Corral.
+
+            """.utf8))
+            return
+        }
+        guard let root = payload(),
               let session = root["session_id"] as? String
         else { return }
 
@@ -132,6 +141,44 @@ enum StatusLine {
     }
 
     // ─ Reading what arrived ─────────────────────────────────────────────────
+
+    /// The object the agent hands over, read without ever waiting on it.
+    ///
+    /// This used to be `readToEnd()`, which returns only once every copy of the
+    /// pipe's write end is closed. An agent that keeps it open — or anything it
+    /// started that inherited it — left the process sitting there for good, one
+    /// more on every update. So reading stops as soon as a whole object has
+    /// arrived, and gives up at the deadline either way: a status line that
+    /// misses one update is fine; one that never exits is not.
+    static func payload(
+        from descriptor: Int32 = STDIN_FILENO, within timeout: TimeInterval = 2
+    ) -> [String: Any]? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else { return nil }
+            var waiting = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&waiting, 1, Int32((remaining * 1000).rounded(.up)))
+            if ready < 0, errno == EINTR { continue }
+            guard ready > 0, waiting.revents & Int16(POLLNVAL) == 0 else { return nil }
+            let count = read(descriptor, &buffer, buffer.count)
+            if count < 0, errno == EINTR || errno == EAGAIN { continue }
+            guard count > 0 else { return count == 0 ? object(in: data) : nil }
+            data.append(contentsOf: buffer[..<count])
+            if let object = object(in: data) { return object }
+        }
+    }
+
+    /// A whole object, or nil while it is still arriving. Only tried once the
+    /// last byte in could close one, so a payload split across reads is not
+    /// parsed over and over.
+    private static func object(in data: Data) -> [String: Any]? {
+        let whitespace: Set<UInt8> = [0x20, 0x09, 0x0A, 0x0D]
+        guard data.last(where: { !whitespace.contains($0) }) == UInt8(ascii: "}") else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
 
     /// Both tools spell the context window the same way, which is the whole
     /// reason one reader serves both.

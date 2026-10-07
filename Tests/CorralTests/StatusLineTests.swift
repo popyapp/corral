@@ -23,6 +23,80 @@ final class StatusLineTests: XCTestCase {
 
     // ─ Reading ──────────────────────────────────────────────────────────────
 
+    /// A pipe whose write end the test holds, so it can leave it open the way
+    /// an agent — or something it spawned — can.
+    private final class Pipe {
+        let read: Int32
+        private(set) var write: Int32
+        init() throws {
+            var ends: [Int32] = [0, 0]
+            guard Darwin.pipe(&ends) == 0 else { throw XCTSkip("no pipe") }
+            (read, write) = (ends[0], ends[1])
+        }
+        func closeWrite() {
+            if write >= 0 { close(write); write = -1 }
+        }
+        deinit {
+            closeWrite()
+            close(read)
+        }
+    }
+
+    private func pipeEnds() throws -> Pipe {
+        let ends = try Pipe()
+        addTeardownBlock { _ = ends }
+        return ends
+    }
+
+    private func send(_ text: String, to descriptor: Int32) {
+        _ = text.utf8CString.withUnsafeBufferPointer { write(descriptor, $0.baseAddress, $0.count - 1) }
+    }
+
+    /// The hang that was reported: the object arrives but the stream never
+    /// ends. It is read as soon as it is whole, not when the deadline passes.
+    func testAWholeObjectIsReadWithoutWaitingForTheStreamToEnd() throws {
+        let ends = try pipeEnds()
+        send(#"{"session_id":"abc-123","cwd":"/a/b"}"# + "\n", to: ends.write)
+        let started = Date()
+        let root = StatusLine.payload(from: ends.read, within: 5)
+        XCTAssertEqual(root?["session_id"] as? String, "abc-123")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+    }
+
+    func testNothingArrivingGivesUpAtTheDeadline() throws {
+        let ends = try pipeEnds()
+        let started = Date()
+        XCTAssertNil(StatusLine.payload(from: ends.read, within: 0.2))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+    }
+
+    func testAnObjectSplitAcrossWritesIsPutBackTogether() throws {
+        let ends = try pipeEnds()
+        send(#"{"session_id":"abc-123","context_window":{"#, to: ends.write)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            self.send(#""context_window_size":200000,"total_input_tokens":50000}}"#, to: ends.write)
+        }
+        let root = StatusLine.payload(from: ends.read, within: 5)
+        XCTAssertEqual(root.flatMap(StatusLine.context)?.window, 200_000)
+    }
+
+    /// What Claude Code does on an ordinary update: write, then close.
+    func testAClosedStreamIsReadToItsEnd() throws {
+        let ends = try pipeEnds()
+        send(#"{"session_id":"abc-123"}"#, to: ends.write)
+        ends.closeWrite()
+        XCTAssertEqual(StatusLine.payload(from: ends.read, within: 5)?["session_id"] as? String, "abc-123")
+    }
+
+    func testAStreamThatEndsHalfwayIsNotAnObject() throws {
+        let ends = try pipeEnds()
+        send(#"{"session_id":"abc"#, to: ends.write)
+        ends.closeWrite()
+        let started = Date()
+        XCTAssertNil(StatusLine.payload(from: ends.read, within: 5))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1, "an ended stream is not waited on")
+    }
+
     /// The window size arrives stated. That is the whole reason this path
     /// exists: `ClaudeContext` has to prove or guess the same number.
     func testTheContextWindowArrivesStatedRatherThanInferred() {
